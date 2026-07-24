@@ -106,36 +106,90 @@ fn resolve_configured_files(dir: &Path, sel: &ServiceFiles) -> Vec<EnvFile> {
     files
 }
 
+/// Directory names skipped while scanning for env files: version control,
+/// editor state, and dependency/build output folders that never hold config we
+/// want to edit (and can be huge).
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "vendor",
+    ".venv",
+    "__pycache__",
+];
+
+/// How deep to search within a service folder for nested env files.
+const MAX_DEPTH: usize = 8;
+
 /// Auto-discover env files in a service directory by filename pattern.
 ///
-/// Reads the directory and keeps any file whose name matches a known pattern
-/// (via `detect_kind`), e.g. `.env` or `configmap.yml`.
+/// Env files are often nested (e.g. `src/.env`, `docker/app/.env`, or
+/// `deploy/prod/kubernetes/configmap-*.yaml`), so this walks subdirectories
+/// too. Each file's `display` is its path relative to the service folder, so
+/// several `.env` files in different subfolders stay distinguishable.
 fn auto_discover_files(dir: &Path) -> Result<Vec<EnvFile>> {
     let mut files = Vec::new();
     if !dir.is_dir() {
         return Ok(files); // nothing to scan
     }
+    // `dir` is both the starting point and the base we make paths relative to.
+    walk_for_env_files(dir, dir, 0, &mut files)?;
+    files.sort_by(|a, b| a.display.cmp(&b.display));
+    Ok(files)
+}
+
+/// Recursively collect env files under `dir`, computing `display` relative to
+/// `base`. Hidden and well-known noise directories are skipped.
+fn walk_for_env_files(
+    base: &Path,
+    dir: &Path,
+    depth: usize,
+    out: &mut Vec<EnvFile>,
+) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return Ok(());
+    }
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .with_context(|| format!("reading service dir {}", dir.display()))?
+        .with_context(|| format!("reading dir {}", dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path())) // ignore unreadable entries
-        .filter(|p| p.is_file())
         .collect();
     entries.sort();
 
     for path in entries {
-        if let Some(kind) = detect_kind(&path) {
-            let display = path
+        if path.is_dir() {
+            let name = path
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
+                .and_then(|n| n.to_str())
                 .unwrap_or_default();
-            files.push(EnvFile {
-                kind,
-                path,
-                display,
-            });
+            // Skip hidden folders (like `.git`, `.github`) and known noise.
+            if name.starts_with('.') || SKIP_DIRS.contains(&name) {
+                continue;
+            }
+            walk_for_env_files(base, &path, depth + 1, out)?;
+        } else if path.is_file()
+            && let Some(kind) = detect_kind(&path)
+        {
+            // Show the path relative to the service folder, e.g. `src/.env`.
+            let display = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            files_push(out, kind, path, display);
         }
     }
-    Ok(files)
+    Ok(())
+}
+
+/// Small helper to append an [`EnvFile`] (keeps the loop above readable).
+fn files_push(out: &mut Vec<EnvFile>, kind: FileKind, path: PathBuf, display: String) {
+    out.push(EnvFile {
+        kind,
+        path,
+        display,
+    });
 }
 
 #[cfg(test)]
@@ -176,5 +230,65 @@ mod tests {
         let services = discover_scanned(root, &["skip".to_string()]).unwrap();
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].name, "keep");
+    }
+
+    #[test]
+    fn finds_env_files_nested_in_subfolders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let svc = root.join("api");
+        // Env files live in nested folders, not at the service top level.
+        fs::create_dir_all(svc.join("src")).unwrap();
+        fs::create_dir_all(svc.join("docker/app")).unwrap();
+        fs::create_dir_all(svc.join("deploy/prod/kubernetes")).unwrap();
+        touch(&svc.join("src"), ".env");
+        touch(&svc.join("docker/app"), ".env.example");
+        touch(&svc.join("deploy/prod/kubernetes"), "configmap-api.yaml");
+
+        let services = discover_scanned(root, &[]).unwrap();
+        assert_eq!(services.len(), 1);
+        let files = &services[0].files;
+        assert_eq!(files.len(), 3);
+
+        // `display` is the path relative to the service folder.
+        let displays: Vec<&str> = files.iter().map(|f| f.display.as_str()).collect();
+        assert!(displays.contains(&"src/.env"));
+        assert!(displays.contains(&"docker/app/.env.example"));
+        assert!(displays.contains(&"deploy/prod/kubernetes/configmap-api.yaml"));
+    }
+
+    #[test]
+    fn distinguishes_same_named_files_in_different_subfolders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let svc = root.join("api");
+        fs::create_dir_all(svc.join("src")).unwrap();
+        fs::create_dir_all(svc.join("docker")).unwrap();
+        touch(&svc.join("src"), ".env");
+        touch(&svc.join("docker"), ".env");
+
+        let services = discover_scanned(root, &[]).unwrap();
+        let displays: Vec<&str> = services[0].files.iter().map(|f| f.display.as_str()).collect();
+        assert_eq!(displays, vec!["docker/.env", "src/.env"]); // sorted, distinct
+    }
+
+    #[test]
+    fn skips_noise_and_hidden_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let svc = root.join("api");
+        // Real env file plus decoys inside skipped directories.
+        fs::create_dir_all(svc.join("src")).unwrap();
+        fs::create_dir_all(svc.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(svc.join("vendor")).unwrap();
+        fs::create_dir_all(svc.join(".git")).unwrap();
+        touch(&svc.join("src"), ".env");
+        touch(&svc.join("node_modules/pkg"), ".env");
+        touch(&svc.join("vendor"), ".env");
+        touch(&svc.join(".git"), ".env");
+
+        let services = discover_scanned(root, &[]).unwrap();
+        let displays: Vec<&str> = services[0].files.iter().map(|f| f.display.as_str()).collect();
+        assert_eq!(displays, vec!["src/.env"]);
     }
 }
