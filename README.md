@@ -95,8 +95,24 @@ Everything after `--` is passed to `nv`, e.g. `cargo run --release -- find db`.
 cargo install --path .
 ```
 
-This copies `nv` into `~/.cargo/bin`. As long as that folder is on your `PATH`
-(rustup sets this up for you), you can now run `nv` from any directory:
+This copies `nv` into `~/.cargo/bin`. That folder must be on your `PATH` for the
+bare `nv` command to work.
+
+- If you installed Rust with **rustup**, it's already set up — just open a new
+  terminal.
+- If you installed Rust another way (e.g. **Homebrew**, where `cargo` lives in
+  `/opt/homebrew/bin`), `~/.cargo/bin` is usually *not* on your `PATH`. Add it
+  once with the line for your shell, then restart the terminal:
+
+  ```sh
+  # zsh (default on macOS)
+  echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+
+  # bash
+  echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+  ```
+
+Then, from any directory:
 
 ```sh
 nv --help
@@ -105,10 +121,11 @@ nv --help
 > **"command not found: nv"?**
 > That message means your shell can't find an `nv` on your `PATH` yet. It does
 > **not** mean anything is broken. Either run the binary by its path
-> (`./target/release/nv`), use `cargo run --release -- ...`, or install it with
-> `cargo install --path .` (Option C). If you installed it and still see the
-> error, make sure `~/.cargo/bin` is on your `PATH` (open a new terminal, or add
-> `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile).
+> (`./target/release/nv`), use `cargo run --release -- ...`, or make sure
+> `~/.cargo/bin` is on your `PATH` using the `export PATH=...` line above (this
+> is the common case when Rust was installed via Homebrew rather than rustup).
+> Verify with `echo $PATH | tr ':' '\n' | grep cargo` — if it prints nothing,
+> the folder isn't on your `PATH` yet.
 
 ## Quick start
 
