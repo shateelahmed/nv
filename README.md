@@ -36,6 +36,8 @@ an interactive TUI.
   `--yes` for automation.
 - **Transparent config source**: every command tells you whether it read from
   `nv.yml` or the command line.
+- **Colorized output**: hierarchical, color-coded output with configurable colors
+  for services, folders, files, keys, and values. Respects `NO_COLOR` standard.
 
 ## Getting started (no Rust experience needed)
 
@@ -208,6 +210,29 @@ nv gen JWT_SECRET --length 48 --format base64 --yes
 nv gen SESSION_KEY --length 32 --format alnum --unique --yes
 ```
 
+The `nv find` command displays results in a hierarchical, colorized format:
+
+```
+Color legend:
+  magenta microservice root
+  blue subfolder
+  cyan file
+  green key name
+  yellow value
+
+auth/
+  src/
+    .env
+      DATABASE_URL = postgres://db:5432/app
+      LOG_LEVEL = debug
+  docker/
+    .env
+      API_KEY = sk-...
+  .env.example
+      DATABASE_URL =
+      LOG_LEVEL =
+```
+
 ## Configuration (`nv.yml`)
 
 `nv` looks for `nv.yml` in the current directory (walking upward). Every subfolder
@@ -243,7 +268,25 @@ secrets:
   SESSION_KEY:
     length: 32
     format: alnum
+
+# Color configuration for CLI output (nv find).
+colors:
+  service_root: magenta  # microservice root folder names
+  subfolder: blue        # subfolder names within a service
+  file: cyan             # file names
+  key: green             # env variable key names
+  value: yellow          # env variable values
 ```
+
+### Color configuration
+
+The `colors` section in `nv.yml` customizes the terminal output colors for
+`nv find`. Available colors: `black`, `red`, `green`, `yellow`, `blue`,
+`magenta`, `cyan`, `white`.
+
+Colors are automatically disabled when:
+- The `NO_COLOR` environment variable is set (see [no-color.org](https://no-color.org/))
+- Output is not a terminal (e.g., piped to a file)
 
 Use `--no-config` on any command to ignore `nv.yml` and rely purely on
 `--root` / `--service` / `--file`. The active source is always printed as
@@ -279,6 +322,7 @@ cargo fmt              # format
 | --- | --- |
 | `src/model.rs` | Core domain types. |
 | `src/config.rs` | `nv.yml` schema, load/save. |
+| `src/color.rs` | ANSI color support and color configuration. |
 | `src/discovery.rs` | Resolve services and their files. |
 | `src/parser/` | Formatting-preserving dotenv & YAML editors. |
 | `src/search.rs` | Fuzzy search over env keys. |

@@ -6,6 +6,7 @@
 
 // Each `mod` declaration makes another source file part of this program.
 mod cli; // command-line parsing, the wizard, and command handlers
+mod color; // ANSI color support and color configuration
 mod config; // reading/writing the `nv.yml` config file
 mod discovery; // finding services and their env files on disk
 mod edit; // building, previewing (diffing), and applying file changes

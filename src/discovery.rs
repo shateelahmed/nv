@@ -142,12 +142,7 @@ fn auto_discover_files(dir: &Path) -> Result<Vec<EnvFile>> {
 
 /// Recursively collect env files under `dir`, computing `display` relative to
 /// `base`. Hidden and well-known noise directories are skipped.
-fn walk_for_env_files(
-    base: &Path,
-    dir: &Path,
-    depth: usize,
-    out: &mut Vec<EnvFile>,
-) -> Result<()> {
+fn walk_for_env_files(base: &Path, dir: &Path, depth: usize, out: &mut Vec<EnvFile>) -> Result<()> {
     if depth > MAX_DEPTH {
         return Ok(());
     }
@@ -268,7 +263,11 @@ mod tests {
         touch(&svc.join("docker"), ".env");
 
         let services = discover_scanned(root, &[]).unwrap();
-        let displays: Vec<&str> = services[0].files.iter().map(|f| f.display.as_str()).collect();
+        let displays: Vec<&str> = services[0]
+            .files
+            .iter()
+            .map(|f| f.display.as_str())
+            .collect();
         assert_eq!(displays, vec!["docker/.env", "src/.env"]); // sorted, distinct
     }
 
@@ -288,7 +287,11 @@ mod tests {
         touch(&svc.join(".git"), ".env");
 
         let services = discover_scanned(root, &[]).unwrap();
-        let displays: Vec<&str> = services[0].files.iter().map(|f| f.display.as_str()).collect();
+        let displays: Vec<&str> = services[0]
+            .files
+            .iter()
+            .map(|f| f.display.as_str())
+            .collect();
         assert_eq!(displays, vec!["src/.env"]);
     }
 }

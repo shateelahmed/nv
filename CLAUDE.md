@@ -65,6 +65,7 @@ filesystem access.
 | --- | --- |
 | `src/model.rs` | Core domain types. |
 | `src/config.rs` | `nv.yml` schema, load/save. |
+| `src/color.rs` | ANSI color support and color configuration. |
 | `src/discovery.rs` | Resolve services and files. |
 | `src/parser/` | Formatting-preserving dotenv & YAML editors. |
 | `src/search.rs` | Fuzzy search. |

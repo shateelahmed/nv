@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::color::ColorConfig;
+
 /// The file name `nv` looks for in the current directory.
 pub const CONFIG_FILE: &str = "nv.yml";
 
@@ -90,6 +92,9 @@ pub struct Config {
     /// written file has a stable, predictable order.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secrets: BTreeMap<String, SecretPreset>,
+    /// Color configuration for CLI output.
+    #[serde(default)]
+    pub colors: ColorConfig,
 }
 
 impl Config {
