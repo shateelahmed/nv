@@ -1,0 +1,140 @@
+//! Command-line interface: argument parsing, context resolution, and handlers.
+//!
+//! We use the `clap` library with its "derive" style: the `Cli` struct and
+//! `Command` enum below *describe* the command line, and `clap` generates the
+//! parser and `--help` text from them automatically. Each `#[arg(...)]` /
+//! `#[command(...)]` attribute configures one flag or subcommand.
+
+pub mod context;
+mod find;
+mod generate;
+mod set;
+pub mod wizard;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+use crate::config::SecretFormat;
+
+/// `nv` — configure environment variables across multiple microservices.
+///
+/// These are the "global" options: they work with any subcommand. `global =
+/// true` lets them appear before or after the subcommand on the command line.
+#[derive(Debug, Parser)]
+#[command(name = "nv", version, about, long_about = None)]
+pub struct Cli {
+    /// Ignore nv.yml and drive everything from the command line.
+    #[arg(long, global = true)]
+    pub no_config: bool,
+
+    /// Services root directory (used when there is no nv.yml or with
+    /// --no-config). Defaults to the current directory.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub root: Option<String>,
+
+    /// Restrict to these services (repeatable). Empty means all services.
+    #[arg(long = "service", short = 's', global = true, value_name = "NAME")]
+    pub services: Vec<String>,
+
+    /// Restrict to these file kinds: dotenv, dotenv_example, configmap, secret
+    /// (repeatable). Empty means all files.
+    #[arg(long = "file", short = 'f', global = true, value_name = "KIND")]
+    pub files: Vec<String>,
+
+    /// Target every service and file, ignoring --service/--file filters.
+    #[arg(long, global = true)]
+    pub all: bool,
+
+    /// Show what would change without writing.
+    #[arg(long, global = true)]
+    pub dry_run: bool,
+
+    /// Apply changes without an interactive confirmation prompt.
+    #[arg(long, short = 'y', global = true)]
+    pub yes: bool,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// The subcommands `nv` supports. Each variant becomes `nv <name>` on the CLI,
+/// and its fields become that subcommand's arguments.
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Create or update nv.yml via an interactive wizard.
+    Init,
+
+    /// Fuzzy-find a key across all services.
+    Find {
+        /// Search query (matches service, key, and file name).
+        #[arg(default_value = "")]
+        query: String,
+    },
+
+    /// Set a key to a value across the selected services and files.
+    Set {
+        /// The environment variable key.
+        key: String,
+        /// The value to set.
+        value: String,
+    },
+
+    /// Generate a random secret and set it on a key.
+    Gen {
+        /// The environment variable key.
+        key: String,
+        /// Number of characters (alnum/charset) or random bytes (hex/base64).
+        #[arg(long)]
+        length: Option<usize>,
+        /// Output format.
+        #[arg(long, value_enum)]
+        format: Option<FormatArg>,
+        /// Custom character set (overrides --format).
+        #[arg(long)]
+        charset: Option<String>,
+        /// Generate a distinct secret for each target instead of sharing one.
+        #[arg(long)]
+        unique: bool,
+    },
+}
+
+/// CLI mirror of [`SecretFormat`].
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum FormatArg {
+    Hex,
+    Base64,
+    Alnum,
+}
+
+impl From<FormatArg> for SecretFormat {
+    fn from(f: FormatArg) -> Self {
+        match f {
+            FormatArg::Hex => SecretFormat::Hex,
+            FormatArg::Base64 => SecretFormat::Base64,
+            FormatArg::Alnum => SecretFormat::Alnum,
+        }
+    }
+}
+
+/// Parse arguments and dispatch to the appropriate handler.
+///
+/// `Cli::parse()` reads the process arguments (and exits with help/errors if
+/// they're invalid). We then route to the matching command function. When no
+/// subcommand is given (`None`), we launch the interactive TUI.
+pub fn run() -> Result<()> {
+    let cli = Cli::parse();
+
+    match &cli.command {
+        Some(Command::Init) => wizard::run_init(&cli),
+        Some(Command::Find { query }) => find::run(&cli, query),
+        Some(Command::Set { key, value }) => set::run(&cli, key, value),
+        Some(Command::Gen {
+            key,
+            length,
+            format,
+            charset,
+            unique,
+        }) => generate::run(&cli, key, *length, *format, charset.clone(), *unique),
+        None => crate::tui::launch(&cli),
+    }
+}
