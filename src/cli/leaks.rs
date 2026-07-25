@@ -132,7 +132,10 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Print leaks grouped by service, then by file.
+/// Print leaks grouped by service, then by file, with tree-style vertical lines.
+///
+/// Each file is shown with its full path relative to the service root.
+/// Tree lines are colored to match the text they lead to.
 fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
     let mut grouped: LeakMap = BTreeMap::new();
 
@@ -151,17 +154,34 @@ fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
             colorize(&format!("{}/", service), colors.service_root, use_color)
         );
 
-        for (file_display, keys) in files {
-            let name = file_display
-                .rsplit_once('/')
-                .map(|(_, n)| n)
-                .unwrap_or(file_display);
-            println!("  {}", colorize(name, colors.file, use_color));
+        let file_count = files.len();
+        for (i, (file_display, keys)) in files.iter().enumerate() {
+            let is_last_file = i + 1 == file_count;
+            let branch = if is_last_file {
+                "└── "
+            } else {
+                "├── "
+            };
+            let pipe = if is_last_file { "    " } else { "│   " };
 
-            for (key, value) in keys {
+            // File-level branch and pipe in service color (parent node).
+            print!("{}", colorize(branch, colors.service_root, use_color));
+            println!("{}", colorize(file_display, colors.file, use_color));
+
+            for (j, (key, value)) in keys.iter().enumerate() {
+                let is_last_key = j + 1 == keys.len();
+                let key_branch = if is_last_key {
+                    "└── "
+                } else {
+                    "├── "
+                };
                 let key_display = colorize(key, colors.key, use_color);
                 let value_display = colorize(value, colors.value, use_color);
-                println!("    {} = {}", key_display, value_display);
+
+                // Pipe in service color (continuation below service), branch in file color.
+                print!("{}", colorize(pipe, colors.service_root, use_color));
+                print!("{}", colorize(key_branch, colors.file, use_color));
+                println!("{} = {}", key_display, value_display);
             }
         }
     }

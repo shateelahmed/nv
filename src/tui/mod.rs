@@ -584,12 +584,14 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
     let lines: Vec<Line> = diff
         .lines()
         .map(|l| {
-            let style = if l.starts_with('+') {
+            let style = if l.contains(" + ") {
+                // Diff addition line (tree characters before + sign).
                 Style::default().fg(Color::Green)
-            } else if l.starts_with('-') {
+            } else if l.contains(" - ") {
+                // Diff removal line (tree characters before - sign).
                 Style::default().fg(Color::Red)
             } else if l.ends_with('/') {
-                // Service or subfolder name — highlight like the old header.
+                // Service name — highlight like the old header.
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)

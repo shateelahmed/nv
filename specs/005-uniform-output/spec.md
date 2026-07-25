@@ -24,8 +24,10 @@ scan quickly.
 ## Goals
 
 - All commands produce output in the same hierarchical colorized format.
+- Tree-style vertical lines (`├──`, `└──`, `│`) indicate indentation hierarchy.
 - Diff previews show `+`/`-` indicators with dedicated colors (green/red).
-- Subfolder grouping is used when file paths contain `/`.
+- File names always include the full path relative to the service root
+  (e.g., `docker/.env`, not just `.env`).
 - The format is configurable via `nv.yml` colors, same as `find`.
 
 ## Non-goals
@@ -35,18 +37,28 @@ scan quickly.
 
 ## Uniform output convention (golden rule #6)
 
-All commands that display data or previews MUST follow this structure:
+All commands that display data or previews MUST follow this structure with
+tree-style vertical lines:
 
-```
+```text
 service_name/
-  subfolder/           ← when file path contains /
-    filename
-      KEY = value      ← for data display (find, leaks)
-      + KEY = new      ← for diff additions
-      - KEY = old      ← for diff removals
-  filename
-    KEY = value
+├── docker/.env           ← full path relative to service root
+│   ├── DB_PASSWORD = secret
+│   └── API_KEY = sk-test
+└── configmap.yml
+    └── DB_PASSWORD: secret
 ```
+
+- File names always include the full path relative to the service root.
+  A file at `auth/docker/.env` is shown as `docker/.env` under `auth/`.
+- Tree characters (`├──`, `└──`, `│`) indicate the hierarchy.
+- `├──` is used for items that have siblings below; `└──` for the last item.
+- `│` continues the vertical line for non-last items; spaces for last items.
+- Tree lines are colored to match the text they lead to:
+  - File-level branches (`├──`, `└──`): service color (magenta)
+  - Key-level branches (`├──`, `└──`): file color (cyan)
+  - Diff-level branches (`├──`, `└──`): file color (cyan)
+  - Continuation lines (`│`): parent's text color (service or file color)
 
 ### Color roles
 
@@ -67,17 +79,19 @@ when `NO_COLOR` is set or stdout is not a TTY.
 
 When showing a preview of changes (used by `set`, `gen`, `remove`, `leaks --clean`):
 
-```
+```text
 service_name/
-  filename
-    - OLD_LINE
-    + NEW_LINE
+├── docker/.env
+│   ├── - OLD_LINE
+│   └── + NEW_LINE
+└── configmap.yml
+    └── - OLD_LINE
 ```
 
 - Lines removed from the file are prefixed with `- ` and colored `removed`.
 - Lines added to the file are prefixed with `+ ` and colored `added`.
 - Unchanged lines are omitted (same as current behavior).
-- The hierarchical grouping (service → subfolder → file) is the same as `find`.
+- Tree characters show the hierarchy, same as `find`.
 
 ## Acceptance criteria
 

@@ -19,9 +19,12 @@ and `secrets*.yml` files **while preserving comments and formatting**.
 4. **Secrets are raw strings.** No base64 encode/decode of Kubernetes `data:`.
 5. **Every command reports its config source** (`nv.yml` vs `command-line`).
 6. **Uniform output format.** All commands that display data or previews use the
-   same hierarchical colorized format: service → subfolder → file → key/value.
-   Diff previews use `+`/`-` indicators with `added`/`removed` colors. No raw
-   unified diffs (`---`/`+`/`-` without structure or color).
+   same hierarchical colorized format with tree-style vertical lines (`├──`,
+   `└──`, `│`). Tree lines and continuation lines are colored to match the
+   parent node's text color (e.g., branches under a service name use service
+   color). File names always include the full path relative to the service root
+   (e.g., `docker/.env`). Diff previews use `+`/`-` indicators with
+   `added`/`removed` colors.
 
 ## Spec-driven development
 

@@ -34,7 +34,8 @@ impl AnsiColor {
             AnsiColor::Yellow => "\x1b[33m",
             AnsiColor::Blue => "\x1b[34m",
             AnsiColor::Magenta => "\x1b[35m",
-            AnsiColor::Cyan => "\x1b[36m",
+            // #03d7fc → RGB(3, 215, 252) → 24-bit true color
+            AnsiColor::Cyan => "\x1b[38;2;3;215;252m",
             AnsiColor::White => "\x1b[37m",
             AnsiColor::Reset => "\x1b[0m",
         }
@@ -199,6 +200,7 @@ mod tests {
     fn ansi_color_codes_are_valid() {
         assert_eq!(AnsiColor::Red.code(), "\x1b[31m");
         assert_eq!(AnsiColor::Reset.code(), "\x1b[0m");
+        assert_eq!(AnsiColor::Cyan.code(), "\x1b[38;2;3;215;252m");
     }
 
     #[test]

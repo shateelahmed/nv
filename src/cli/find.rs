@@ -64,7 +64,23 @@ fn colorize_color_name(color: AnsiColor, use_color: bool) -> String {
     }
 }
 
-/// Print the hierarchical grouped output.
+/// Print the hierarchical grouped output with tree-style vertical lines.
+///
+/// Each file is shown with its full path relative to the service root,
+/// e.g. `docker/.env` instead of grouping by subfolder.
+///
+/// Tree lines (`├──`, `└──`, `│`) are colored to match the text they lead to:
+/// - File-level branches: file color (cyan)
+/// - Key-level branches: key color (green)
+///
+/// ```text
+/// service_name/
+/// ├── docker/.env
+/// │   ├── DB_PASSWORD = secret
+/// │   └── API_KEY = sk-test
+/// └── configmap.yml
+///     └── DB_PASSWORD: secret
+/// ```
 fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_color: bool) {
     // Group by service, then by file display path.
     let mut grouped: BTreeMap<String, BTreeMap<String, Vec<&EnvKey>>> = BTreeMap::new();
@@ -85,50 +101,35 @@ fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_colo
             colorize(&format!("{}/", service), colors.service_root, use_color)
         );
 
-        // Group files by their parent folder for hierarchical display.
-        let mut folder_files: BTreeMap<String, Vec<(&String, &Vec<&EnvKey>)>> = BTreeMap::new();
-
-        for (file_display, keys) in files {
-            if let Some((folder, _filename)) = file_display.rsplit_once('/') {
-                folder_files
-                    .entry(folder.to_string())
-                    .or_default()
-                    .push((file_display, keys));
+        let file_count = files.len();
+        for (i, (file_display, keys)) in files.iter().enumerate() {
+            let is_last_file = i + 1 == file_count;
+            let branch = if is_last_file {
+                "└── "
             } else {
-                // File is at the service root level (no folder).
-                folder_files
-                    .entry(String::new())
-                    .or_default()
-                    .push((file_display, keys));
-            }
-        }
+                "├── "
+            };
+            let pipe = if is_last_file { "    " } else { "│   " };
 
-        for (folder, file_entries) in &folder_files {
-            if !folder.is_empty() {
-                // Print subfolder with indentation.
-                println!(
-                    "  {}",
-                    colorize(&format!("{}/", folder), colors.subfolder, use_color)
-                );
-            }
+            // File-level branch and pipe in service color (parent node).
+            print!("{}", colorize(branch, colors.service_root, use_color));
+            println!("{}", colorize(file_display, colors.file, use_color));
 
-            for (filename, keys) in file_entries {
-                // Extract just the filename part (after last slash).
-                let name = filename
-                    .rsplit_once('/')
-                    .map(|(_, n)| n)
-                    .unwrap_or(filename);
-                // Print file name with indentation.
-                let indent = if folder.is_empty() { "  " } else { "    " };
-                println!("{}{}", indent, colorize(name, colors.file, use_color));
+            // Print each key-value pair under the file.
+            for (j, key) in keys.iter().enumerate() {
+                let is_last_key = j + 1 == keys.len();
+                let key_branch = if is_last_key {
+                    "└── "
+                } else {
+                    "├── "
+                };
+                let key_display = colorize(&key.key, colors.key, use_color);
+                let value_display = colorize(&key.value, colors.value, use_color);
 
-                // Print each key-value pair under the file.
-                for key in keys.iter() {
-                    let kv_indent = if folder.is_empty() { "    " } else { "      " };
-                    let key_display = colorize(&key.key, colors.key, use_color);
-                    let value_display = colorize(&key.value, colors.value, use_color);
-                    println!("{}{} = {}", kv_indent, key_display, value_display);
-                }
+                // Pipe in service color (continuation below service), branch in file color.
+                print!("{}", colorize(pipe, colors.service_root, use_color));
+                print!("{}", colorize(key_branch, colors.file, use_color));
+                println!("{} = {}", key_display, value_display);
             }
         }
     }
