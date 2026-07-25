@@ -227,7 +227,13 @@ fn run_clean(cli: &Cli, ctx: &context::Context, leaks: &[Leak]) -> Result<()> {
         }
     }
 
-    context::preview_and_apply(cli, &changes)
+    let use_color = color::should_use_color();
+    let colors = ctx
+        .config
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_default();
+    context::preview_and_apply(cli, &changes, &colors, use_color)
 }
 
 /// Mark one or more keys as false alarms in nv.yml.

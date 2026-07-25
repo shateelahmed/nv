@@ -573,10 +573,12 @@ fn draw_value(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
+    // Pass `use_color: false` since the TUI applies its own ratatui styles.
+    let colors = crate::color::ColorConfig::default();
     let diff = app
         .changeset
         .as_ref()
-        .map(|c| c.render_diff())
+        .map(|c| c.render_diff(&colors, false))
         .unwrap_or_default();
 
     let lines: Vec<Line> = diff
@@ -586,7 +588,8 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::Green)
             } else if l.starts_with('-') {
                 Style::default().fg(Color::Red)
-            } else if l.starts_with("---") {
+            } else if l.ends_with('/') {
+                // Service or subfolder name — highlight like the old header.
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)

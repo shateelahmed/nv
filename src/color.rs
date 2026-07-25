@@ -87,6 +87,14 @@ pub struct ColorConfig {
     /// Color for environment variable values.
     #[serde(default = "default_value")]
     pub value: AnsiColor,
+
+    /// Color for added lines in diff previews (`+` prefix).
+    #[serde(default = "default_added")]
+    pub added: AnsiColor,
+
+    /// Color for removed lines in diff previews (`-` prefix).
+    #[serde(default = "default_removed")]
+    pub removed: AnsiColor,
 }
 
 fn default_service_root() -> AnsiColor {
@@ -109,6 +117,14 @@ fn default_value() -> AnsiColor {
     AnsiColor::Yellow
 }
 
+fn default_added() -> AnsiColor {
+    AnsiColor::Green
+}
+
+fn default_removed() -> AnsiColor {
+    AnsiColor::Red
+}
+
 impl Default for ColorConfig {
     fn default() -> Self {
         Self {
@@ -117,6 +133,8 @@ impl Default for ColorConfig {
             file: default_file(),
             key: default_key(),
             value: default_value(),
+            added: default_added(),
+            removed: default_removed(),
         }
     }
 }
@@ -203,6 +221,8 @@ mod tests {
         assert_eq!(config.file, AnsiColor::Cyan);
         assert_eq!(config.key, AnsiColor::Green);
         assert_eq!(config.value, AnsiColor::Yellow);
+        assert_eq!(config.added, AnsiColor::Green);
+        assert_eq!(config.removed, AnsiColor::Red);
     }
 
     #[test]
@@ -215,5 +235,7 @@ mod tests {
         assert_eq!(config.file, parsed.file);
         assert_eq!(config.key, parsed.key);
         assert_eq!(config.value, parsed.value);
+        assert_eq!(config.added, parsed.added);
+        assert_eq!(config.removed, parsed.removed);
     }
 }

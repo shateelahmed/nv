@@ -7,11 +7,13 @@
 //! (compute the new text for each) → show a **diff** → **apply** (write to disk).
 //! Nothing touches the filesystem until `apply` is called.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use similar::{ChangeTag, TextDiff};
 
+use crate::color::{ColorConfig, colorize};
 use crate::model::{EnvFile, FileKind, Service};
 use crate::parser;
 
@@ -55,6 +57,9 @@ pub struct FileChange {
     pub service: String,
     pub display: String,
     pub path: PathBuf,
+    /// The file kind, retained for callers that want to filter or inspect
+    /// changes by type.
+    #[allow(dead_code)]
     pub kind: FileKind,
     /// The key and value being written, retained for callers that want to
     /// report or inspect an individual change.
@@ -124,32 +129,85 @@ impl ChangeSet {
         self.effective().next().is_none()
     }
 
-    /// Render a unified-style diff of all effective changes.
+    /// Render a hierarchical, colorized diff of all effective changes.
     ///
-    /// Lines added start with `+`, removed lines with `-`; unchanged lines are
-    /// omitted so the preview stays short.
-    pub fn render_diff(&self) -> String {
+    /// Groups changes by service and subfolder, then shows `+`/`-` diff lines
+    /// with color. This is the same format used by `nv find` and `nv leaks`.
+    pub fn render_diff(&self, colors: &ColorConfig, use_color: bool) -> String {
         let mut out = String::new();
+
+        // Group changes by service name.
+        let mut by_service: BTreeMap<String, Vec<&FileChange>> = BTreeMap::new();
         for change in self.effective() {
+            by_service
+                .entry(change.service.clone())
+                .or_default()
+                .push(change);
+        }
+
+        for (service, changes) in &by_service {
+            // Service root heading.
             out.push_str(&format!(
-                "--- {} [{}] ({})\n",
-                change.service, change.display, change.kind
+                "{}\n",
+                colorize(&format!("{}/", service), colors.service_root, use_color)
             ));
-            let diff = TextDiff::from_lines(&change.old_content, &change.new_content);
-            for op in diff.iter_all_changes() {
-                let sign = match op.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => " ",
-                };
-                if op.tag() == ChangeTag::Equal {
-                    continue;
+
+            // Group files by their parent folder for hierarchical display.
+            let mut folder_files: BTreeMap<String, Vec<&&FileChange>> = BTreeMap::new();
+            for change in changes {
+                if let Some((folder, _)) = change.display.rsplit_once('/') {
+                    folder_files
+                        .entry(folder.to_string())
+                        .or_default()
+                        .push(change);
+                } else {
+                    folder_files.entry(String::new()).or_default().push(change);
                 }
-                out.push_str(sign);
-                out.push_str(op.value().trim_end_matches('\n'));
-                out.push('\n');
+            }
+
+            for (folder, file_changes) in &folder_files {
+                if !folder.is_empty() {
+                    out.push_str(&format!(
+                        "  {}\n",
+                        colorize(&format!("{}/", folder), colors.subfolder, use_color)
+                    ));
+                }
+
+                for change in file_changes {
+                    // Extract just the filename (after last slash).
+                    let name = change
+                        .display
+                        .rsplit_once('/')
+                        .map(|(_, n)| n)
+                        .unwrap_or(change.display.as_str());
+                    let indent = if folder.is_empty() { "  " } else { "    " };
+                    out.push_str(&format!(
+                        "{}{}\n",
+                        indent,
+                        colorize(name, colors.file, use_color)
+                    ));
+
+                    // Render diff lines for this file.
+                    let diff = TextDiff::from_lines(&change.old_content, &change.new_content);
+                    let kv_indent = if folder.is_empty() { "    " } else { "      " };
+                    for op in diff.iter_all_changes() {
+                        let (sign, line_color) = match op.tag() {
+                            ChangeTag::Delete => ("-", colors.removed),
+                            ChangeTag::Insert => ("+", colors.added),
+                            ChangeTag::Equal => continue,
+                        };
+                        let line = op.value().trim_end_matches('\n');
+                        out.push_str(&format!(
+                            "{}{} {}\n",
+                            kv_indent,
+                            sign,
+                            colorize(line, line_color, use_color)
+                        ));
+                    }
+                }
             }
         }
+
         out
     }
 

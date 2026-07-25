@@ -49,6 +49,8 @@ specs/
     tasks.md
   003-leaks-command/
     spec.md
+  004-remove-command/
+    spec.md
 ```
 
 Number features sequentially (`001`, `002`, …) and use a short, kebab-case slug.

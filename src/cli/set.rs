@@ -3,6 +3,7 @@
 use anyhow::{Result, bail};
 
 use super::{Cli, context};
+use crate::color;
 use crate::edit::{self, ChangeSet};
 
 /// Handle `nv set <KEY> <VALUE>`: write the same value to every selected target.
@@ -22,5 +23,12 @@ pub fn run(cli: &Cli, key: &str, value: &str) -> Result<()> {
     // The closure `|_| value.to_string()` ignores the target and always returns
     // the same value, so every file gets identical content for this key.
     let changes = ChangeSet::build(&targets, key, |_| value.to_string())?;
-    context::preview_and_apply(cli, &changes)
+
+    let use_color = color::should_use_color();
+    let colors = ctx
+        .config
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_default();
+    context::preview_and_apply(cli, &changes, &colors, use_color)
 }

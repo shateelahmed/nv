@@ -9,6 +9,7 @@ pub mod context;
 mod find;
 mod generate;
 mod leaks;
+mod remove;
 mod set;
 pub mod wizard;
 
@@ -109,6 +110,25 @@ pub enum Command {
         #[arg(long = "false-alarm", value_name = "KEY")]
         false_alarm: Option<String>,
     },
+
+    /// Remove environment variable keys from files.
+    Remove {
+        /// The key(s) to remove (repeatable).
+        #[arg(required = true)]
+        keys: Vec<String>,
+        /// Target env files (.env*).
+        #[arg(short = 'e')]
+        env: bool,
+        /// Target configmap files.
+        #[arg(short = 'c')]
+        configmap: bool,
+        /// Target secrets files.
+        #[arg(short = 'x')]
+        secrets: bool,
+        /// Target all services and file types.
+        #[arg(short = 'a')]
+        all: bool,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -149,6 +169,13 @@ pub fn run() -> Result<()> {
             unique,
         }) => generate::run(&cli, key, *length, *format, charset.clone(), *unique),
         Some(Command::Leaks { clean, false_alarm }) => leaks::run(&cli, *clean, false_alarm),
+        Some(Command::Remove {
+            keys,
+            env,
+            configmap,
+            secrets,
+            all,
+        }) => remove::run(&cli, keys, *env, *configmap, *secrets, *all),
         None => crate::tui::launch(&cli),
     }
 }

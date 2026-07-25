@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 
 use super::Cli;
+use crate::color::ColorConfig;
 use crate::config::{self, Config};
 use crate::discovery;
 use crate::model::{ConfigSource, FileKind, Service};
@@ -108,16 +109,22 @@ pub fn print_banner(source: ConfigSource) {
 /// Preview a change set and, unless `--dry-run`, apply it (prompting for
 /// confirmation unless `--yes`).
 ///
-/// This is the shared "safe write" path used by `set` and `gen`: show the diff,
-/// stop for `--dry-run`, ask for confirmation, then write.
-pub fn preview_and_apply(cli: &Cli, changes: &crate::edit::ChangeSet) -> Result<()> {
+/// This is the shared "safe write" path used by `set`, `gen`, `remove`, and
+/// `leaks --clean`: show the hierarchical colorized diff, stop for `--dry-run`,
+/// ask for confirmation, then write.
+pub fn preview_and_apply(
+    cli: &Cli,
+    changes: &crate::edit::ChangeSet,
+    colors: &ColorConfig,
+    use_color: bool,
+) -> Result<()> {
     if changes.is_empty() {
         eprintln!("Nothing to change.");
         return Ok(());
     }
 
-    // Show the diff so the user sees exactly what will change.
-    println!("{}", changes.render_diff());
+    // Show the hierarchical colorized diff so the user sees exactly what will change.
+    println!("{}", changes.render_diff(colors, use_color));
 
     if cli.dry_run {
         eprintln!("Dry run: no files written.");

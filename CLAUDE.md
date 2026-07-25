@@ -21,6 +21,10 @@ and `secrets*.yml` **while preserving comments and formatting**.
    generated secrets.
 4. **Secrets are raw strings.** No base64 for Kubernetes `data:`.
 5. **Every command reports its config source** (`nv.yml` vs `command-line`).
+6. **Uniform output format.** All commands that display data or previews use the
+   same hierarchical colorized format: service → subfolder → file → key/value.
+   Diff previews use `+`/`-` indicators with `added`/`removed` colors. No raw
+   unified diffs (`---`/`+`/`-` without structure or color).
 
 ## Spec-driven development
 
@@ -53,7 +57,7 @@ assistant-config change is required.
 ## Build & verify
 
 ```sh
-cargo build      # no warnings
+cargo build      # no warnings — zero tolerance
 cargo test       # all green
 cargo clippy     # clean
 cargo fmt        # formatted

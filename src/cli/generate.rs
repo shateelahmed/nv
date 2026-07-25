@@ -6,6 +6,7 @@
 use anyhow::{Result, bail};
 
 use super::{Cli, FormatArg, context};
+use crate::color;
 use crate::edit::{self, ChangeSet};
 use crate::secret::{self, SecretSpec};
 
@@ -79,5 +80,11 @@ pub fn run(
         }
     })?;
 
-    context::preview_and_apply(cli, &changes)
+    let use_color = color::should_use_color();
+    let colors = ctx
+        .config
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_default();
+    context::preview_and_apply(cli, &changes, &colors, use_color)
 }
