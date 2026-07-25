@@ -116,6 +116,10 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
         return Ok(());
     }
 
+    if clean {
+        return run_clean(cli, &ctx, &leaks);
+    }
+
     let use_color = color::should_use_color();
     let colors = ctx
         .config
@@ -125,10 +129,6 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
 
     print_leaks(&leaks, &colors, use_color);
 
-    if clean {
-        return run_clean(cli, &ctx, &leaks);
-    }
-
     Ok(())
 }
 
@@ -136,6 +136,7 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
 ///
 /// Each file is shown with its full path relative to the service root.
 /// Tree lines are colored to match the text they lead to.
+/// Counts are shown next to service names and file names.
 fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
     let mut grouped: LeakMap = BTreeMap::new();
 
@@ -149,9 +150,16 @@ fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
     }
 
     for (service, files) in &grouped {
+        // Count leaks in this service.
+        let service_count: usize = files.values().map(|k| k.len()).sum();
         println!(
-            "{}",
-            colorize(&format!("{}/", service), colors.service_root, use_color)
+            "{} {}",
+            colorize(&format!("{}/", service), colors.service_root, use_color),
+            colorize(
+                &format!("({})", service_count),
+                colors.service_root,
+                use_color
+            )
         );
 
         let file_count = files.len();
@@ -166,7 +174,11 @@ fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
 
             // File-level branch and pipe in service color (parent node).
             print!("{}", colorize(branch, colors.service_root, use_color));
-            println!("{}", colorize(file_display, colors.file, use_color));
+            println!(
+                "{} {}",
+                colorize(file_display, colors.file, use_color),
+                colorize(&format!("({})", keys.len()), colors.file, use_color)
+            );
 
             for (j, (key, value)) in keys.iter().enumerate() {
                 let is_last_key = j + 1 == keys.len();

@@ -158,11 +158,31 @@ impl ChangeSet {
                 .push(change);
         }
 
+        // Count total diff lines for the footer.
+        let mut total_diffs = 0usize;
+
         for (service, changes) in &by_service {
-            // Service root heading.
+            // Count diff lines in this service.
+            let service_count: usize = changes
+                .iter()
+                .map(|c| {
+                    let diff = TextDiff::from_lines(&c.old_content, &c.new_content);
+                    diff.iter_all_changes()
+                        .filter(|op| op.tag() != ChangeTag::Equal)
+                        .count()
+                })
+                .sum();
+            total_diffs += service_count;
+
+            // Service root heading with count.
             out.push_str(&format!(
-                "{}\n",
-                colorize(&format!("{}/", service), colors.service_root, use_color)
+                "{} {}\n",
+                colorize(&format!("{}/", service), colors.service_root, use_color),
+                colorize(
+                    &format!("({})", service_count),
+                    colors.service_root,
+                    use_color
+                )
             ));
 
             let file_count = changes.len();
@@ -175,12 +195,7 @@ impl ChangeSet {
                 };
                 let pipe = if is_last_file { "    " } else { "│   " };
 
-                // File-level branch and pipe in service color (parent node).
-                out.push_str(&colorize(branch, colors.service_root, use_color).to_string());
-                out.push_str(&colorize(&change.display, colors.file, use_color).to_string());
-                out.push('\n');
-
-                // Render diff lines for this file.
+                // Count diff lines in this file.
                 let diff = TextDiff::from_lines(&change.old_content, &change.new_content);
                 let diff_lines: Vec<_> = diff
                     .iter_all_changes()
@@ -194,6 +209,16 @@ impl ChangeSet {
                         }
                     })
                     .collect();
+
+                // File-level branch and pipe in service color (parent node).
+                out.push_str(&colorize(branch, colors.service_root, use_color).to_string());
+                out.push_str(&colorize(&change.display, colors.file, use_color).to_string());
+                out.push_str(&format!(
+                    " {}\n",
+                    colorize(&format!("({})", diff_lines.len()), colors.file, use_color)
+                ));
+
+                // Render diff lines for this file.
                 for (j, (sign, line_color, line)) in diff_lines.iter().enumerate() {
                     let is_last_line = j + 1 == diff_lines.len();
                     let key_branch = if is_last_line {
@@ -206,11 +231,23 @@ impl ChangeSet {
                     out.push_str(&colorize(key_branch, colors.file, use_color).to_string());
                     out.push_str(&format!(
                         "{} {}\n",
-                        sign,
+                        colorize(sign, *line_color, use_color),
                         colorize(line, *line_color, use_color)
                     ));
                 }
             }
+        }
+
+        if total_diffs > 0 {
+            out.push('\n');
+            out.push_str(&format!(
+                "{}\n",
+                colorize(
+                    &format!("{} potential change(s) found.", total_diffs),
+                    colors.service_root,
+                    use_color
+                )
+            ));
         }
 
         out
