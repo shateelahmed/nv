@@ -85,6 +85,18 @@ pub fn set_value(content: &str, kind: FileKind, key: &str, value: &str) -> Strin
     }
 }
 
+/// Return new file content with `key` removed. All other bytes are preserved.
+///
+/// For dotenv files the assignment line is deleted. For YAML files the mapping
+/// line is deleted. If the key is not present, content is returned unchanged.
+pub fn remove_key(content: &str, kind: FileKind, key: &str) -> String {
+    if kind.is_yaml() {
+        yaml::remove_key(content, key)
+    } else {
+        dotenv::remove_key(content, key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

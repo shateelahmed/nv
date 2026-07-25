@@ -173,7 +173,7 @@ impl ChangeSet {
 
 /// Read a file's text, treating "file not found" as an empty string so new
 /// files can be created seamlessly. Other I/O errors are still reported.
-fn read_or_empty(path: &std::path::Path) -> Result<String> {
+pub fn read_or_empty(path: &std::path::Path) -> Result<String> {
     match std::fs::read_to_string(path) {
         Ok(c) => Ok(c),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),

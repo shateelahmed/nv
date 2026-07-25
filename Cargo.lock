@@ -1024,6 +1024,7 @@ dependencies = [
  "predicates",
  "rand 0.10.2",
  "ratatui",
+ "regex",
  "serde",
  "serde_yaml",
  "similar",

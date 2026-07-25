@@ -8,6 +8,7 @@
 pub mod context;
 mod find;
 mod generate;
+mod leaks;
 mod set;
 pub mod wizard;
 
@@ -96,6 +97,18 @@ pub enum Command {
         #[arg(long)]
         unique: bool,
     },
+
+    /// List keys that look like secrets in example and configmap files.
+    Leaks {
+        /// Remove detected keys from configmaps and set empty values in
+        /// example files. Shows a preview before applying.
+        #[arg(long)]
+        clean: bool,
+        /// Mark a detected key as a false alarm (saved to nv.yml so it is
+        /// skipped on future runs).
+        #[arg(long = "false-alarm", value_name = "KEY")]
+        false_alarm: Option<String>,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -135,6 +148,7 @@ pub fn run() -> Result<()> {
             charset,
             unique,
         }) => generate::run(&cli, key, *length, *format, charset.clone(), *unique),
+        Some(Command::Leaks { clean, false_alarm }) => leaks::run(&cli, *clean, false_alarm),
         None => crate::tui::launch(&cli),
     }
 }

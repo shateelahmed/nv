@@ -226,6 +226,40 @@ pub fn set_value(content: &str, key: &str, value: &str) -> String {
     out
 }
 
+/// Remove `key` from YAML `content`, preserving all other formatting.
+///
+/// Works for both flat and Kubernetes-style YAML. If the key is not present,
+/// the content is returned unchanged.
+pub fn remove_key(content: &str, key: &str) -> String {
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let ends_with_newline = content.ends_with('\n') || content.is_empty();
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    let mut removed = false;
+    lines.retain(|line| {
+        if removed {
+            return true;
+        }
+        if let Some((_, k, _)) = mapping_of(line)
+            && k == key
+        {
+            removed = true;
+            return false;
+        }
+        true
+    });
+
+    let mut out = lines.join(newline);
+    if ends_with_newline || out.is_empty() {
+        out.push_str(newline);
+    }
+    out
+}
+
 /// Edit or insert a key in a flat top-level mapping.
 fn set_flat(lines: &mut Vec<String>, key: &str, value: &str) {
     // First try to find and overwrite an existing top-level key.

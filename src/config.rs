@@ -92,6 +92,10 @@ pub struct Config {
     /// written file has a stable, predictable order.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secrets: BTreeMap<String, SecretPreset>,
+    /// False alarms reported by `nv leaks`. Maps service name → list of key
+    /// names to ignore on future runs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub false_alarms: BTreeMap<String, Vec<String>>,
     /// Color configuration for CLI output.
     #[serde(default)]
     pub colors: ColorConfig,
@@ -112,6 +116,26 @@ impl Config {
     /// Look up the secret preset for a key, if any.
     pub fn secret_preset(&self, key: &str) -> Option<&SecretPreset> {
         self.secrets.get(key)
+    }
+
+    /// Check whether a key in a specific service is marked as a false alarm.
+    pub fn is_false_alarm(&self, service: &str, key: &str) -> bool {
+        self.false_alarms
+            .get(service)
+            .map(|keys| keys.iter().any(|k| k == key))
+            .unwrap_or(false)
+    }
+
+    /// Mark a key in a specific service as a false alarm, creating entries as
+    /// needed. Returns `true` if the key was newly added.
+    pub fn add_false_alarm(&mut self, service: &str, key: &str) -> bool {
+        let keys = self.false_alarms.entry(service.to_string()).or_default();
+        if keys.iter().any(|k| k == key) {
+            false
+        } else {
+            keys.push(key.to_string());
+            true
+        }
     }
 }
 

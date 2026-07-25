@@ -81,6 +81,40 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
         .collect() // gather everything into a Vec
 }
 
+/// Remove `key` from `content`, preserving comments and blank lines.
+///
+/// If the key is not present, the content is returned unchanged.
+pub fn remove_key(content: &str, key: &str) -> String {
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let ends_with_newline = content.ends_with('\n') || content.is_empty();
+
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let mut removed = false;
+
+    lines.retain(|line| {
+        if removed {
+            return true;
+        }
+        if let Some((k, _)) = parse_line(line)
+            && k == key
+        {
+            removed = true;
+            return false; // drop this line
+        }
+        true
+    });
+
+    let mut out = lines.join(newline);
+    if ends_with_newline {
+        out.push_str(newline);
+    }
+    out
+}
+
 /// Set `key` to `value`, editing the existing assignment line in place or
 /// appending a new one. Comments and blank lines are preserved.
 pub fn set_value(content: &str, key: &str, value: &str) -> String {
