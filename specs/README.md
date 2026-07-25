@@ -63,3 +63,7 @@ Number features sequentially (`001`, `002`, …) and use a short, kebab-case slu
   drop unrelated content (see `.github/copilot-instructions.md`).
 - **Keep artifacts in sync.** When scope changes, update the spec first, then the
   plan and tasks.
+- **Convert instructions to specs before implementing.** When a new instruction
+  (e.g., from a CLAUDE.md rule, copilot-instructions entry, or prompt) would
+  introduce a durable behavior change or new capability, create a spec for it
+  before writing code. Simple clarifications or typo fixes are exempt.
