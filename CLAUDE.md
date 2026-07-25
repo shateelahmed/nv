@@ -44,7 +44,9 @@ assistant-config change is required.
 - `rand` 0.10: `random()` / `random_range()` are on the `rand::RngExt` trait;
   `rand::rng()` gives a thread RNG.
 - Use `anyhow::Result` at boundaries; avoid `unwrap()`/`panic!` outside tests.
-- Document items with `///`; keep functions small. Tests live in
+- Document items with `///` and add inline comments (`//`) to explain
+  non-obvious logic so someone unfamiliar with the code can follow along. Keep
+  functions small. Tests live in
   `#[cfg(test)] mod tests` next to the code. Parser/edit changes require
   formatting-preservation tests.
 

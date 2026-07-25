@@ -42,7 +42,9 @@ required.
   use `rand::rng()` for a thread RNG.
 - Prefer `anyhow::Result` at boundaries; return errors, don't `panic!`/`unwrap()`
   outside tests.
-- Keep functions small and documented with `///`. Match the existing module
+- Keep functions small and documented with `///`. Add inline comments (`//`) to
+  explain non-obvious logic so someone unfamiliar with the code can follow along.
+  Match the existing module
   layout (see the table in `README.md`).
 - Add unit tests next to the code (`#[cfg(test)] mod tests`). Parser and edit
   logic changes MUST include tests proving formatting is preserved.
