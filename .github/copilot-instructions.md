@@ -1,7 +1,7 @@
 # Copilot instructions for `nv`
 
 `nv` (pronounced *envy*) is a Rust CLI + TUI for configuring environment variables
-across multiple microservices. It edits `.env`, `.env.example`, `configmap*.yml`,
+across multiple microservices. It edits `.env*` files, `configmap*.yml`,
 and `secrets*.yml` files **while preserving comments and formatting**.
 
 ## Golden rules
@@ -13,8 +13,9 @@ and `secrets*.yml` files **while preserving comments and formatting**.
 2. **YAML is edited line-by-line, not via a round-trip serializer.** There is no
    comment-preserving YAML serializer in the stack; do not introduce one for
    writes. `serde_yaml` is only used where structure reading is acceptable.
-3. **`.env.example` never receives real secret values.** Generated secrets are
-   written empty there.
+3. **Example files never receive real secret values.** Any file containing
+   `.example` in its name (e.g., `.env.example`, `.env.testing.example`)
+   receives empty generated secrets.
 4. **Secrets are raw strings.** No base64 encode/decode of Kubernetes `data:`.
 5. **Every command reports its config source** (`nv.yml` vs `command-line`).
 

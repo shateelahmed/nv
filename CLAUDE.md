@@ -5,7 +5,7 @@ Guidance for Claude Code when working in this repository.
 ## Project
 
 `nv` (pronounced *envy*) is a Rust CLI + TUI that configures environment variables
-across multiple microservices. It edits `.env`, `.env.example`, `configmap*.yml`,
+across multiple microservices. It edits `.env*` files, `configmap*.yml`,
 and `secrets*.yml` **while preserving comments and formatting**.
 
 ## Golden rules (do not violate)
@@ -16,8 +16,9 @@ and `secrets*.yml` **while preserving comments and formatting**.
    `src/parser/`.
 2. **YAML writes are line-oriented.** Do not add a comment-preserving YAML
    serializer. `serde_yaml` is only for reading structure.
-3. **`.env.example` never gets real secret values** — generated secrets are empty
-   there.
+3. **Example files never get real secret values** — any file containing `.example`
+   in its name (e.g., `.env.example`, `.env.testing.example`) receives empty
+   generated secrets.
 4. **Secrets are raw strings.** No base64 for Kubernetes `data:`.
 5. **Every command reports its config source** (`nv.yml` vs `command-line`).
 

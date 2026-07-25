@@ -27,7 +27,7 @@ Follow the spec-driven workflow in @specs/README.md.
 
 ## Constraints
 
-- Respect the project guarantees: formatting-preserving edits, `.env.example`
+- Respect the project guarantees: formatting-preserving edits, example file
   secrets stay empty, secrets are raw strings, and every command reports its
   config source.
 - Keep the spec focused on a single feature.

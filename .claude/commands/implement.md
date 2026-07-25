@@ -25,8 +25,8 @@ Follow the spec-driven workflow in @specs/README.md.
 - **Preserve formatting.** All file writes go through `src/parser/`; never
   re-serialize whole files. Comments, ordering, and unrelated lines stay
   byte-identical.
-- `.env.example` receives empty values for generated secrets; secrets are raw
-  strings (no base64).
+- Example files (`.env.example`, `.env.testing.example`, etc.) receive empty
+  values for generated secrets; secrets are raw strings (no base64).
 - Edition 2024: the generate module is `src/cli/generate.rs`. `rand` 0.10 methods
   come from `rand::RngExt`.
 - Add/extend unit tests alongside the code, especially formatting-preservation

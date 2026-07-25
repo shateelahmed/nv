@@ -3,7 +3,7 @@
 > **nv** (pronounced *envy*) — configure environment variables across multiple microservices from your terminal.
 
 `nv` finds, sets, and generates environment variables spread across many services
-and file formats — `.env`, `.env.example`, `configmap*.yml`, and `secrets*.yml` —
+and file formats — `.env*` files, `configmap*.yml`, and `secrets*.yml` —
 while **preserving comments and formatting**. It offers both a scriptable CLI and
 an interactive TUI.
 
@@ -13,9 +13,10 @@ an interactive TUI.
   `DATABASE_URL` or `JWT_SECRET`.
 - **Microservice** — in `nv`, just a folder that holds one app's config files.
   Point `nv` at a parent directory and each subfolder is treated as a service.
-- **Env files** — the files `nv` edits: `.env` and `.env.example` (simple
-  `KEY=value` lines) and `configmap*.yml` / `secrets*.yml` (Kubernetes-style
-  YAML). You don't need to know Kubernetes to use them.
+- **Env files** — the files `nv` edits: `.env*` (simple `KEY=value` lines,
+  including `.env`, `.env.local`, `.env.example`, `.env.testing.example`, etc.)
+  and `configmap*.yml` / `secrets*.yml` (Kubernetes-style YAML). You don't need
+  to know Kubernetes to use them.
 - **CLI vs TUI** — the **CLI** is one-line commands you type (great for scripts);
   the **TUI** is the interactive full-screen menu you get by running `nv` with no
   arguments.
@@ -30,8 +31,9 @@ an interactive TUI.
 - **Formatting-preserving edits**: comments, ordering, and untouched lines stay
   byte-identical. New keys are auto-created (YAML keys land under `data:` /
   `stringData:`).
-- **Example files stay safe**: generated secrets are written *empty* into
-  `.env.example`.
+- **Example files stay safe**: generated secrets are written *empty* into any
+  file containing `.example` in its name (e.g., `.env.example`,
+  `.env.testing.example`).
 - **Preview & confirm**: see a diff before anything is written; `--dry-run` and
   `--yes` for automation.
 - **Transparent config source**: every command tells you whether it read from

@@ -43,6 +43,10 @@ specs/
     spec.md
     plan.md
     tasks.md
+  002-env-file-glob/
+    spec.md
+    plan.md
+    tasks.md
 ```
 
 Number features sequentially (`001`, `002`, …) and use a short, kebab-case slug.
