@@ -1,0 +1,241 @@
+//! `nv encrypt` / `nv decrypt` — encrypt or decrypt an entire file using
+//! AES-256-GCM with a user-provided key.
+
+use aes_gcm::aead::Aead;
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use anyhow::{Result, bail};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
+
+use super::Cli;
+use crate::color;
+use crate::edit::ChangeSet;
+
+/// The prefix that indicates encrypted content.
+const ENCRYPTED_PREFIX: &str = "ENC[";
+/// The suffix that indicates encrypted content.
+const ENCRYPTED_SUFFIX: &str = "]";
+/// PBKDF2 iteration count for key derivation.
+const PBKDF2_ITERATIONS: u32 = 100_000;
+/// Salt for key derivation.
+const SALT: &[u8] = b"nv-encrypt-salt-v1";
+
+/// Derive an AES-256 key from a password string using PBKDF2.
+fn derive_key(password: &str) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    pbkdf2_hmac::<Sha256>(password.as_bytes(), SALT, PBKDF2_ITERATIONS, &mut key);
+    key
+}
+
+/// Encrypt plaintext, returning `ENC[base64(nonce+ciphertext)]`.
+fn encrypt_content(plaintext: &str, password: &str) -> Result<String> {
+    if plaintext.is_empty() {
+        return Ok(String::new());
+    }
+
+    let key = derive_key(password);
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| anyhow::anyhow!("failed to create cipher: {e}"))?;
+
+    let nonce_bytes: [u8; 12] = rand::random();
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_bytes())
+        .map_err(|e| anyhow::anyhow!("encryption failed: {e}"))?;
+
+    let mut combined = nonce_bytes.to_vec();
+    combined.extend_from_slice(&ciphertext);
+
+    Ok(format!(
+        "{}{}{}",
+        ENCRYPTED_PREFIX,
+        BASE64.encode(&combined),
+        ENCRYPTED_SUFFIX
+    ))
+}
+
+/// Decrypt `ENC[...]` content back to plaintext.
+fn decrypt_content(value: &str, password: &str) -> Result<String> {
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+
+    let Some(encoded) = value
+        .strip_prefix(ENCRYPTED_PREFIX)
+        .and_then(|s| s.strip_suffix(ENCRYPTED_SUFFIX))
+    else {
+        return Ok(value.to_string());
+    };
+
+    let combined = BASE64
+        .decode(encoded)
+        .map_err(|e| anyhow::anyhow!("invalid base64 in encrypted content: {e}"))?;
+
+    if combined.len() < 12 {
+        bail!("encrypted content too short (missing nonce)");
+    }
+    let (nonce_bytes, ciphertext) = combined.split_at(12);
+
+    let key = derive_key(password);
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| anyhow::anyhow!("failed to create cipher: {e}"))?;
+
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| anyhow::anyhow!("decryption failed (wrong key?): {e}"))?;
+
+    String::from_utf8(plaintext)
+        .map_err(|e| anyhow::anyhow!("decrypted content is not valid UTF-8: {e}"))
+}
+
+/// Find a service by name and a file by relative path within it.
+fn find_target<'a>(
+    services: &'a [crate::model::Service],
+    service_name: &str,
+    file_path: &str,
+) -> Result<&'a crate::model::EnvFile> {
+    let service = services
+        .iter()
+        .find(|s| s.name == service_name)
+        .ok_or_else(|| anyhow::anyhow!("service '{service_name}' not found"))?;
+
+    service
+        .files
+        .iter()
+        .find(|f| f.display == file_path)
+        .ok_or_else(|| anyhow::anyhow!("file '{file_path}' not found in service '{service_name}'"))
+}
+
+/// Handle `nv encrypt`: encrypt an entire file.
+pub fn run_encrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
+    let ctx = super::context::resolve(cli)?;
+    super::context::print_banner(ctx.source);
+
+    let target_file = find_target(&ctx.services, service_name, file_path)?;
+    let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
+
+    let new_content = encrypt_content(&old_content, password)?;
+
+    let changes = ChangeSet {
+        changes: vec![crate::edit::FileChange {
+            service: service_name.to_string(),
+            display: target_file.display.clone(),
+            path: target_file.path.clone(),
+            kind: target_file.kind,
+            key: String::new(),
+            value: String::new(),
+            old_content,
+            new_content,
+        }],
+    };
+
+    let use_color = color::should_use_color();
+    let colors = ctx
+        .config
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_default();
+    super::context::preview_and_apply(cli, &changes, &colors, use_color)
+}
+
+/// Handle `nv decrypt`: decrypt an entire file.
+pub fn run_decrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
+    let ctx = super::context::resolve(cli)?;
+    super::context::print_banner(ctx.source);
+
+    let target_file = find_target(&ctx.services, service_name, file_path)?;
+    let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
+
+    let new_content = decrypt_content(&old_content, password)?;
+
+    let changes = ChangeSet {
+        changes: vec![crate::edit::FileChange {
+            service: service_name.to_string(),
+            display: target_file.display.clone(),
+            path: target_file.path.clone(),
+            kind: target_file.kind,
+            key: String::new(),
+            value: String::new(),
+            old_content,
+            new_content,
+        }],
+    };
+
+    let use_color = color::should_use_color();
+    let colors = ctx
+        .config
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_default();
+    super::context::preview_and_apply(cli, &changes, &colors, use_color)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let password = "test-password-123";
+        let original = "hello world";
+        let encrypted = encrypt_content(original, password).unwrap();
+        assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
+        assert!(encrypted.ends_with(ENCRYPTED_SUFFIX));
+        assert_ne!(encrypted, original);
+
+        let decrypted = decrypt_content(&encrypted, password).unwrap();
+        assert_eq!(decrypted, original);
+    }
+
+    #[test]
+    fn encrypt_empty_content() {
+        let result = encrypt_content("", "key").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn decrypt_empty_content() {
+        let result = decrypt_content("", "key").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn decrypt_non_encrypted_passthrough() {
+        let result = decrypt_content("plain-text", "key").unwrap();
+        assert_eq!(result, "plain-text");
+    }
+
+    #[test]
+    fn wrong_key_fails() {
+        let encrypted = encrypt_content("secret", "correct-key").unwrap();
+        let result = decrypt_content(&encrypted, "wrong-key");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encrypt_preserves_multiline_content() {
+        let content = "# comment\nFOO=bar\nBAZ=qux\n";
+        let encrypted = encrypt_content(content, "key").unwrap();
+        let decrypted = decrypt_content(&encrypted, "key").unwrap();
+        assert_eq!(decrypted, content);
+    }
+
+    #[test]
+    fn encrypt_newlines_in_content() {
+        let content = "line1\nline2\nline3\n";
+        let encrypted = encrypt_content(content, "key").unwrap();
+        let decrypted = decrypt_content(&encrypted, "key").unwrap();
+        assert_eq!(decrypted, content);
+    }
+
+    #[test]
+    fn encrypt_special_characters() {
+        let content = "KEY=\"value with spaces\"\nOTHER=foo#bar\n";
+        let encrypted = encrypt_content(content, "key").unwrap();
+        let decrypted = decrypt_content(&encrypted, "key").unwrap();
+        assert_eq!(decrypted, content);
+    }
+}

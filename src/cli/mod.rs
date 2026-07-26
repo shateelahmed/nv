@@ -6,6 +6,7 @@
 //! `#[command(...)]` attribute configures one flag or subcommand.
 
 pub mod context;
+mod encrypt;
 mod fake_secrets;
 mod find;
 mod generate;
@@ -138,6 +139,32 @@ pub enum Command {
         #[arg(short = 'a')]
         all: bool,
     },
+
+    /// Encrypt all values in selected .env.example files.
+    Encrypt {
+        /// Encryption key (required).
+        #[arg(long)]
+        key: String,
+        /// The service name (required).
+        #[arg(short = 'S')]
+        service: String,
+        /// The file path relative to the service directory (required).
+        #[arg(short = 'F')]
+        file: String,
+    },
+
+    /// Decrypt all values in selected .env.example files.
+    Decrypt {
+        /// Decryption key (required).
+        #[arg(long)]
+        key: String,
+        /// The service name (required).
+        #[arg(short = 'S')]
+        service: String,
+        /// The file path relative to the service directory (required).
+        #[arg(short = 'F')]
+        file: String,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -186,6 +213,12 @@ pub fn run() -> Result<()> {
             secrets,
             all,
         }) => remove::run(&cli, keys, *env, *configmap, *secrets, *all),
+        Some(Command::Encrypt { key, service, file }) => {
+            encrypt::run_encrypt(&cli, key, service, file)
+        }
+        Some(Command::Decrypt { key, service, file }) => {
+            encrypt::run_decrypt(&cli, key, service, file)
+        }
         None => crate::tui::launch(&cli),
     }
 }

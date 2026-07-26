@@ -55,6 +55,8 @@ specs/
     spec.md
   006-fake-secrets-command/
     spec.md
+  007-encrypt-decrypt-command/
+    spec.md
 ```
 
 Number features sequentially (`001`, `002`, …) and use a short, kebab-case slug.
