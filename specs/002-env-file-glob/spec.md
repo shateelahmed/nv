@@ -9,7 +9,8 @@
 
 Broaden the set of recognized environment files from the explicit `.env` and
 `.env.example` to the glob `.env*`, covering `.env.local`, `.env.testing`,
-`.env.testing.example`, and any future variants.
+`.env.testing.example`, and any future variants. Also support YAML example files
+like `secrets-*.yaml.example` and `configmap-*.yaml.example`.
 
 ## Problem / Motivation
 
@@ -19,6 +20,10 @@ types. Real-world projects use additional variants such as `.env.local`,
 format and should be discovered, parsed, and edited by `nv` without requiring
 configuration changes.
 
+Similarly, YAML files like `secrets-*.yaml.example` and
+`configmap-*.yaml.example` are template files that should be recognized as
+their base types (Secret, ConfigMap) for consistency.
+
 ## Goals
 
 - All files matching `.env*` in a service directory are recognized as
@@ -26,10 +31,13 @@ configuration changes.
 - Existing behavior for `.env` and `.env.example` is preserved exactly.
 - The `.env.example`-style rule (no real secret values) applies to any file
   whose name contains `.example` (e.g., `.env.testing.example`).
+- YAML files matching `secrets-*.yml.example` or `secrets-*.yaml.example` are
+  recognized as Secret files.
+- YAML files matching `configmap-*.yml.example` or `configmap-*.yaml.example`
+  are recognized as ConfigMap files.
 
 ## Non-goals
 
-- Changing how secrets or YAML files are handled.
 - Adding new CLI flags to filter env file variants.
 
 ## User stories
@@ -38,6 +46,8 @@ configuration changes.
   my local overrides are managed in one place.
 - As a platform engineer, I want `nv` to edit `.env.testing.example` so that CI
   templates stay in sync without manual file maintenance.
+- As a platform engineer, I want `nv` to recognize `secrets-*.yaml.example` as
+  secrets template files for auditing and management.
 
 ## Behavior & requirements
 
@@ -46,6 +56,10 @@ configuration changes.
   `.example` in its name, not just `.env.example`.
 - Files that match `.env*` but are not valid dotenv format SHOULD produce a
   clear error rather than being silently skipped.
+- YAML files matching `secrets-*.yml.example` or `secrets-*.yaml.example` MUST
+  be recognized as Secret files.
+- YAML files matching `configmap-*.yml.example` or `configmap-*.yaml.example`
+  MUST be recognized as ConfigMap files.
 
 ## Acceptance criteria
 
@@ -55,6 +69,10 @@ configuration changes.
 - [ ] Given `.env.testing.example`, when secrets are generated, the file receives
       empty values.
 - [ ] Given `.env.local`, when a key is edited, the value is written directly.
+- [ ] Given `secrets-db.yaml.example`, when `nv` discovers files, it is
+      recognized as a Secret file.
+- [ ] Given `configmap-api.yaml.example`, when `nv` discovers files, it is
+      recognized as a ConfigMap file.
 - [ ] Existing tests for `.env` and `.env.example` continue to pass unchanged.
 
 ## Edge cases
@@ -63,6 +81,8 @@ configuration changes.
 - `.env.` (trailing dot, no suffix) is treated as a match.
 - Hidden files like `.env.swp` or `.env~` are NOT matched (the glob requires
   `.env` followed by meaningful characters, not just dot/suffix artifacts).
+- `secrets.yml.example` (no dash) is recognized as Secret.
+- `configmap.yml.example` (no dash) is recognized as ConfigMap.
 
 ## Open questions
 

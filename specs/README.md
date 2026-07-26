@@ -51,6 +51,10 @@ specs/
     spec.md
   004-remove-command/
     spec.md
+  005-uniform-output/
+    spec.md
+  006-fake-secrets-command/
+    spec.md
 ```
 
 Number features sequentially (`001`, `002`, …) and use a short, kebab-case slug.

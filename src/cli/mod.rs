@@ -6,6 +6,7 @@
 //! `#[command(...)]` attribute configures one flag or subcommand.
 
 pub mod context;
+mod fake_secrets;
 mod find;
 mod generate;
 mod leaks;
@@ -111,6 +112,14 @@ pub enum Command {
         false_alarm: Option<String>,
     },
 
+    /// List keys with placeholder values or misfiled in secrets files.
+    FakeSecrets {
+        /// Mark a detected key as a false alarm (saved to nv.yml so it is
+        /// skipped on future runs).
+        #[arg(long = "false-alarm", value_name = "KEY")]
+        false_alarm: Option<String>,
+    },
+
     /// Remove environment variable keys from files.
     Remove {
         /// The key(s) to remove (repeatable).
@@ -169,6 +178,7 @@ pub fn run() -> Result<()> {
             unique,
         }) => generate::run(&cli, key, *length, *format, charset.clone(), *unique),
         Some(Command::Leaks { clean, false_alarm }) => leaks::run(&cli, *clean, false_alarm),
+        Some(Command::FakeSecrets { false_alarm }) => fake_secrets::run(&cli, false_alarm),
         Some(Command::Remove {
             keys,
             env,

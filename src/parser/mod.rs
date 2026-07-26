@@ -42,7 +42,10 @@ pub fn detect_kind(path: &Path) -> Option<FileKind> {
         return Some(FileKind::Dotenv);
     }
 
-    let is_yaml = name.ends_with(".yml") || name.ends_with(".yaml");
+    let is_yaml = name.ends_with(".yml")
+        || name.ends_with(".yaml")
+        || name.ends_with(".yml.example")
+        || name.ends_with(".yaml.example");
     if is_yaml {
         if name.starts_with("configmap") {
             return Some(FileKind::ConfigMap);
@@ -175,5 +178,20 @@ mod tests {
     fn secret_yaml() {
         assert_eq!(kind("secrets.yml"), Some(FileKind::Secret));
         assert_eq!(kind("secrets-db.yaml"), Some(FileKind::Secret));
+    }
+
+    #[test]
+    fn secret_yaml_example() {
+        assert_eq!(kind("secrets.yml.example"), Some(FileKind::Secret));
+        assert_eq!(kind("secrets-db.yaml.example"), Some(FileKind::Secret));
+    }
+
+    #[test]
+    fn configmap_yaml_example() {
+        assert_eq!(kind("configmap.yml.example"), Some(FileKind::ConfigMap));
+        assert_eq!(
+            kind("configmap-api.yaml.example"),
+            Some(FileKind::ConfigMap)
+        );
     }
 }
