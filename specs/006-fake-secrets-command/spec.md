@@ -66,6 +66,10 @@ There are two categories of fake secrets:
 - `nv fake-secrets` MUST scan only files of kind `ConfigMap` and `Secret`.
   This includes files like `secrets.yml`, `secrets-db.yaml`,
   `secrets.yml.example`, and `secrets-db.yaml.example`.
+- `nv fake-secrets` MUST display a spinner (with `indicatif`) during the scan
+  showing the current progress.
+- After scanning, `nv fake-secrets` MUST print a summary line: "Scanned N
+  files, M folders."
 - `nv fake-secrets` MUST detect two categories of fake secrets:
 
   **Category 1: Placeholder values in configmaps**

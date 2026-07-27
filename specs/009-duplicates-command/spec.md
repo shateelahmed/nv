@@ -62,6 +62,10 @@ Currently there is no built-in way to identify duplicate keys within env files.
 
 - `nv duplicates` MUST scan files of kind `Dotenv`, `DotenvExample`, `ConfigMap`,
   and `Secret`.
+- `nv duplicates` MUST display a spinner (with `indicatif`) during the scan
+  showing the current progress.
+- After scanning, `nv duplicates` MUST print a summary line: "Scanned N files,
+  M folders."
 - For each service, `nv duplicates` MUST detect:
   - Keys that appear more than once within a single file (intra-file duplicates).
 - The detection MUST be case-sensitive (e.g., `DB_HOST` and `db_host` are

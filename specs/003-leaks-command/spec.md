@@ -53,6 +53,10 @@ each one.
 ### Scanning (default mode)
 
 - `nv leaks` MUST scan only files of kind `DotenvExample` and `ConfigMap`.
+- `nv leaks` MUST display a spinner (with `indicatif`) during the scan showing
+  the current progress.
+- After scanning, `nv leaks` MUST print a summary line: "Scanned N files, M
+  folders."
 - `nv leaks` MUST match keys using the regex pattern:
   ```
   (?m)^\s*(?:export\s+)?([A-Za-z0-9_][A-Z0-9_]+_(?:KEY|PASSWORD|SECRET|TOKEN|ID|USERNAME))[^\S\n]*(?::\s*(.+)|=[^\S\n]*(\S.*))$

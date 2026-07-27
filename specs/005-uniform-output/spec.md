@@ -29,11 +29,32 @@ scan quickly.
 - File names always include the full path relative to the service root
   (e.g., `docker/.env`, not just `.env`).
 - The format is configurable via `nv.yml` colors, same as `find`.
+- Commands that scan files MUST show a spinner during processing and print a
+  summary line with statistics (files scanned, folders scanned) after completion.
 
 ## Non-goals
 
 - Machine-readable output formats (JSON, YAML) — out of scope for now.
 - Changing the hierarchical format used by `find`/`leaks` (it is the standard).
+
+## Progress and statistics
+
+Commands that scan multiple files (e.g., `nv leaks`, `nv fake-secrets`,
+`nv duplicates`, `nv unused`) MUST follow this pattern:
+
+1. **Spinner**: Display a spinner during the scan using `indicatif` with the
+   template `{spinner:.green} {msg}`. The spinner should show the current
+   file being processed or a relevant status message.
+
+2. **Summary line**: After scanning completes, print a summary line to stderr:
+   ```
+   Scanned N files, M folders.
+   ```
+   Where `N` is the number of files scanned and `M` is the number of
+   directories traversed.
+
+3. **Cleanup**: The spinner MUST be cleared before printing results using
+   `finish_and_clear()`.
 
 ## Uniform output convention (golden rule #6)
 
