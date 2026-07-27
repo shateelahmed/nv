@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use anyhow::{Result, bail};
-use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 
 use super::{Cli, context};
@@ -94,18 +93,9 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
     let kv_pattern = key_value_pattern();
     let secret_re = secret_key_pattern();
 
-    // Set up progress spinner.
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::with_template("{spinner:.green} {msg}")
-            .unwrap()
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-    );
-    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    let progress = context::ScanProgress::start();
 
     let mut fake_secrets: Vec<FakeSecret> = Vec::new();
-    let mut files_scanned = 0usize;
-    let mut dirs_scanned = 0usize;
 
     for service in &ctx.services {
         // Apply service filter.
@@ -113,15 +103,15 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
             continue;
         }
 
-        dirs_scanned += 1;
+        progress.inc_dirs();
 
         for file in &service.files {
             if !target_kinds.contains(&file.kind) {
                 continue;
             }
 
-            pb.set_message(format!("Scanning {}", file.display));
-            files_scanned += 1;
+            progress.set_message(format!("Scanning {}", file.display));
+            progress.inc_files();
 
             let content = match fs::read_to_string(&file.path) {
                 Ok(c) => c,
@@ -185,9 +175,7 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
         }
     }
 
-    // Finish spinner and print summary.
-    pb.finish_and_clear();
-    eprintln!("Scanned {} files, {} folders.", files_scanned, dirs_scanned);
+    progress.finish();
 
     // Handle --false-alarm: mark the key in all matching fake secrets and save.
     if let Some(fa_key) = false_alarm {

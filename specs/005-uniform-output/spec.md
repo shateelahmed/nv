@@ -48,10 +48,10 @@ Commands that scan multiple files (e.g., `nv leaks`, `nv fake-secrets`,
 
 2. **Summary line**: After scanning completes, print a summary line to stderr:
    ```
-   Scanned N files, M folders.
+   Scanned N files in M folders.
    ```
    Where `N` is the number of files scanned and `M` is the number of
-   directories traversed.
+   directories traversed. Use singular "file" or "folder" when count is 1.
 
 3. **Cleanup**: The spinner MUST be cleared before printing results using
    `finish_and_clear()`.

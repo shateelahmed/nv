@@ -17,12 +17,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aho_corasick::{AhoCorasick, MatchKind};
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 
 use super::{Cli, context};
 use crate::color;
@@ -112,58 +109,7 @@ struct KeyLocation {
     key: String,
 }
 
-/// Shared state for progress reporting during search.
-struct SearchProgress {
-    pb: ProgressBar,
-    files_scanned: AtomicUsize,
-    dirs_scanned: AtomicUsize,
-    total_keys: usize,
-}
 
-impl SearchProgress {
-    fn new(total_keys: usize) -> Self {
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::with_template("{spinner:.green} {msg}")
-                .unwrap()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-        );
-        pb.enable_steady_tick(std::time::Duration::from_millis(80));
-
-        Self {
-            pb,
-            files_scanned: AtomicUsize::new(0),
-            dirs_scanned: AtomicUsize::new(0),
-            total_keys,
-        }
-    }
-
-    fn update(&self, current_path: &str, found_so_far: usize) {
-        let remaining = self.total_keys - found_so_far;
-        self.pb
-            .set_message(format!("{} key(s) remaining | {}", remaining, current_path));
-    }
-
-    fn increment_files(&self) {
-        self.files_scanned.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn increment_dirs(&self) {
-        self.dirs_scanned.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn finish(&self) {
-        self.pb.finish_and_clear();
-    }
-
-    fn files_scanned(&self) -> usize {
-        self.files_scanned.load(Ordering::Relaxed)
-    }
-
-    fn dirs_scanned(&self) -> usize {
-        self.dirs_scanned.load(Ordering::Relaxed)
-    }
-}
 
 /// Collect all keys from env/example/configmap/secret files.
 fn collect_all_keys(services: &[Service], service_filter: &[String]) -> Vec<KeyLocation> {
@@ -308,7 +254,8 @@ fn search_dir(
     remaining: &mut HashSet<usize>,
     skip_dirs: &HashSet<String>,
     depth: usize,
-    progress: &Arc<SearchProgress>,
+    total_keys: usize,
+    progress: &context::ScanProgress,
 ) {
     if depth > MAX_DEPTH || remaining.is_empty() {
         return;
@@ -319,7 +266,7 @@ fn search_dir(
         Err(_) => return,
     };
 
-    progress.increment_dirs();
+    progress.inc_dirs();
 
     for entry in entries.flatten() {
         if remaining.is_empty() {
@@ -336,13 +283,14 @@ fn search_dir(
             if name.starts_with('.') || skip_dirs.contains(name) {
                 continue;
             }
-            search_dir(&path, ac, remaining, skip_dirs, depth + 1, progress);
+            search_dir(&path, ac, remaining, skip_dirs, depth + 1, total_keys, progress);
         } else if path.is_file() && is_probably_text(&path) {
-            // Update progress with the file we're about to scan.
             let display = path.to_str().unwrap_or("?");
-            progress.update(display, ac.patterns_len() - remaining.len());
+            let found_so_far = total_keys - remaining.len();
+            let remaining_count = total_keys - found_so_far;
+            progress.set_message(format!("{} key(s) remaining | {}", remaining_count, display));
             scan_file(&path, ac, remaining);
-            progress.increment_files();
+            progress.inc_files();
         }
     }
 }
@@ -443,7 +391,7 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let mut remaining: HashSet<usize> = (0..unique_keys.len()).collect();
 
     // Set up progress reporting.
-    let progress = Arc::new(SearchProgress::new(unique_keys.len()));
+    let progress = context::ScanProgress::start_with_keys(unique_keys.len());
 
     // Determine which directories to search:
     // - If `-s` flag is provided, only search within those service directories
@@ -465,21 +413,14 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     };
 
     // Search each directory.
+    let total_keys = unique_keys.len();
     for dir in search_dirs {
-        search_dir(dir, &ac, &mut remaining, &skip_dirs, 0, &progress);
+        search_dir(dir, &ac, &mut remaining, &skip_dirs, 0, total_keys, &progress);
         if remaining.is_empty() {
             break;
         }
     }
     progress.finish();
-
-    // Print summary of the search scope.
-    eprintln!(
-        "Searched {} files, {} folders for {} key(s).",
-        progress.files_scanned(),
-        progress.dirs_scanned(),
-        unique_keys.len()
-    );
 
     // Anything still in `remaining` was never found.
     let unused_keys: Vec<KeyLocation> = all_keys

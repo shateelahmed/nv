@@ -7,7 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 
 use super::{Cli, context};
 use crate::color::{self, ColorConfig, colorize};
@@ -43,19 +42,10 @@ pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
         FileKind::Secret,
     ];
 
-    // Set up progress spinner.
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::with_template("{spinner:.green} {msg}")
-            .unwrap()
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-    );
-    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    let progress = context::ScanProgress::start();
 
     // Group duplicates by service name for uniform output.
     let mut duplicates_by_service: BTreeMap<String, Vec<DuplicateKey>> = BTreeMap::new();
-    let mut files_scanned = 0usize;
-    let mut dirs_scanned = 0usize;
 
     for service in &ctx.services {
         // Apply service filter.
@@ -63,15 +53,15 @@ pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
             continue;
         }
 
-        dirs_scanned += 1;
+        progress.inc_dirs();
 
         for file in &service.files {
             if !target_kinds.contains(&file.kind) {
                 continue;
             }
 
-            pb.set_message(format!("Scanning {}", file.display));
-            files_scanned += 1;
+            progress.set_message(format!("Scanning {}", file.display));
+            progress.inc_files();
         }
 
         let service_dupes = find_duplicates(service, &target_kinds);
@@ -83,9 +73,7 @@ pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
         }
     }
 
-    // Finish spinner and print summary.
-    pb.finish_and_clear();
-    eprintln!("Scanned {} files, {} folders.", files_scanned, dirs_scanned);
+    progress.finish();
 
     if duplicates_by_service.is_empty() {
         eprintln!("No duplicate keys found.");

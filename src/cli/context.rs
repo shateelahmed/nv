@@ -5,8 +5,10 @@
 //! does that once and hands back a [`Context`] the command can use.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Result, bail};
+use indicatif::{ProgressBar, ProgressStyle};
 
 use super::Cli;
 use crate::color::ColorConfig;
@@ -158,5 +160,93 @@ pub fn parse_kind(label: &str) -> Result<FileKind> {
         other => bail!(
             "unknown file kind '{other}' (expected: dotenv, dotenv_example, configmap, secret)"
         ),
+    }
+}
+
+/// A shared progress tracker for commands that scan files.
+///
+/// Displays a spinner during scanning and prints a summary line when finished.
+pub struct ScanProgress {
+    pb: ProgressBar,
+    files_scanned: AtomicUsize,
+    dirs_scanned: AtomicUsize,
+    total_keys: Option<usize>,
+}
+
+impl ScanProgress {
+    /// Create a new spinner with the standard green tick style.
+    pub fn start() -> Self {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.green} {msg}")
+                .unwrap()
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+
+        Self {
+            pb,
+            files_scanned: AtomicUsize::new(0),
+            dirs_scanned: AtomicUsize::new(0),
+            total_keys: None,
+        }
+    }
+
+    /// Create a new spinner with a key count for the summary line.
+    pub fn start_with_keys(total_keys: usize) -> Self {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.green} {msg}")
+                .unwrap()
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+
+        Self {
+            pb,
+            files_scanned: AtomicUsize::new(0),
+            dirs_scanned: AtomicUsize::new(0),
+            total_keys: Some(total_keys),
+        }
+    }
+
+    /// Update the spinner message (e.g., current file being scanned).
+    pub fn set_message(&self, msg: impl Into<String>) {
+        self.pb.set_message(msg.into());
+    }
+
+    /// Increment the files-scanned counter.
+    pub fn inc_files(&self) {
+        self.files_scanned.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the directories-scanned counter.
+    pub fn inc_dirs(&self) {
+        self.dirs_scanned.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Finish the spinner and print the summary line.
+    pub fn finish(&self) {
+        self.pb.finish_and_clear();
+        let files = self.files_scanned.load(Ordering::Relaxed);
+        let dirs = self.dirs_scanned.load(Ordering::Relaxed);
+        let file_noun = if files == 1 { "file" } else { "files" };
+        let folder_noun = if dirs == 1 { "folder" } else { "folders" };
+
+        match self.total_keys {
+            Some(keys) => {
+                let key_noun = if keys == 1 { "key" } else { "keys" };
+                eprintln!(
+                    "Scanned {} {} in {} {} for {} {}.",
+                    files, file_noun, dirs, folder_noun, keys, key_noun
+                );
+            }
+            None => {
+                eprintln!(
+                    "Scanned {} {} in {} {}.",
+                    files, file_noun, dirs, folder_noun
+                );
+            }
+        }
     }
 }
