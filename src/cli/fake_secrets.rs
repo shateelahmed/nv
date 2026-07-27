@@ -11,6 +11,7 @@ use super::{Cli, context};
 use crate::color::{self, ColorConfig, colorize};
 use crate::config::{self, CONFIG_FILE};
 use crate::model::FileKind;
+use crate::parser;
 
 /// Regex matching keys in dotenv/YAML files.
 ///
@@ -109,13 +110,31 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
                 Err(_) => continue,
             };
 
-            for cap in kv_pattern.captures_iter(&content) {
-                let key = cap[1].to_string();
-                let value = cap
-                    .get(3)
-                    .or_else(|| cap.get(2))
-                    .map(|m| m.as_str().trim().to_string())
-                    .unwrap_or_default();
+            // For secrets files, only consider keys under the "data" section.
+            // Use the YAML parser which already handles this correctly.
+            // For configmaps, we still use the regex approach to catch all
+            // key-value pairs.
+            let pairs = match file.kind {
+                FileKind::Secret => parser::parse(&content, file.kind),
+                _ => {
+                    // For configmaps, use regex to find all key-value pairs
+                    let mut result = Vec::new();
+                    for cap in kv_pattern.captures_iter(&content) {
+                        let key = cap[1].to_string();
+                        let value = cap
+                            .get(3)
+                            .or_else(|| cap.get(2))
+                            .map(|m| m.as_str().trim().to_string())
+                            .unwrap_or_default();
+                        result.push(parser::ParsedPair { key, value });
+                    }
+                    result
+                }
+            };
+
+            for pair in pairs {
+                let key = pair.key;
+                let value = pair.value;
 
                 let detected = match file.kind {
                     // Category 1: Placeholder values in configmaps, but only for
@@ -382,5 +401,56 @@ mod tests {
         assert!(cfg.is_false_alarm("auth", "API_KEY"));
         // Adding again returns false (already present).
         assert!(!cfg.add_false_alarm("auth", "API_KEY"));
+    }
+
+    #[test]
+    fn secrets_file_only_considers_data_section() {
+        let content = "\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-secret
+  labels:
+    app: my-app
+data:
+  DB_PASSWORD: c2VjcmV0
+  API_KEY: c2stdGVzdA==
+type: Opaque
+";
+        let pairs = parser::parse(content, FileKind::Secret);
+        let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, vec!["DB_PASSWORD", "API_KEY"]);
+    }
+
+    #[test]
+    fn secrets_file_with_stringdata_section() {
+        let content = "\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-secret
+stringData:
+  DB_PASSWORD: secret
+  API_KEY: sk-test
+";
+        let pairs = parser::parse(content, FileKind::Secret);
+        let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, vec!["DB_PASSWORD", "API_KEY"]);
+    }
+
+    #[test]
+    fn secrets_file_metadata_keys_not_included() {
+        let content = "\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-secret
+  DB_PASSWORD: should-not-be-here
+data:
+  API_KEY: c2stdGVzdA==
+";
+        let pairs = parser::parse(content, FileKind::Secret);
+        let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, vec!["API_KEY"]);
     }
 }

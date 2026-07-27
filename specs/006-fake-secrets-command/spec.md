@@ -88,6 +88,9 @@ There are two categories of fake secrets:
     [A-Za-z0-9_][A-Z0-9_]+_(KEY|PASSWORD|SECRET|TOKEN|ID|USERNAME)
     ```
   - This identifies keys that are likely misfiled and should be in configmaps.
+  - For Kubernetes-style secrets files, only keys under the `data` or
+    `stringData` sections are considered. Keys in `metadata`, `spec`, or other
+    sections are ignored.
 
 - The regex MUST handle both dotenv syntax (`KEY=value`, `KEY= value`,
   `export KEY=value`) and YAML syntax (`KEY: value`).
@@ -147,6 +150,12 @@ Uses global flags: `--service`, `--file`, `--no-config`, `--root`, `--all`.
       on the next run.
 - [ ] Given `secrets-db.yaml.example` with a non-secret key, when
       `nv fake-secrets` is run, the key is listed.
+- [ ] Given a Kubernetes secrets file with `metadata.name: my-secret` and
+      `data.LOG_LEVEL: debug`, when `nv fake-secrets` is run, only `LOG_LEVEL`
+      is listed (metadata keys are ignored).
+- [ ] Given a Kubernetes secrets file with `stringData.CONFIG: value` and
+      `data.DB_PASSWORD: secret`, when `nv fake-secrets` is run, only `CONFIG`
+      is listed (non-secret key in data/stringData).
 
 ## Edge cases
 
@@ -161,6 +170,8 @@ Uses global flags: `--service`, `--file`, `--no-config`, `--root`, `--all`.
   files ARE detected (Category 2).
 - `secrets-*.yaml.example` files are treated as Secret files (same as
   `secrets-*.yaml`).
+- Kubernetes secrets files have keys under `data` or `stringData` sections;
+  keys in other sections (like `metadata`) are not scanned.
 
 ## Open questions
 
