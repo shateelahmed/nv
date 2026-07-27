@@ -10,12 +10,14 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 aes-gcm = "0.10.3"
+aho-corasick = "1"
 anyhow = "1.0.104"
 base64 = "0.23.0"
 clap = { version = "4.6.4", features = ["derive"] }
 crossterm = "0.29.0"
 dialoguer = "0.12.0"
 hex = "0.4.3"
+indicatif = "0.17"
 nucleo-matcher = "0.3.1"
 pbkdf2 = { version = "0.12.2", features = ["hmac"] }
 rand = "0.10.2"

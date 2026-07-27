@@ -77,6 +77,16 @@ fn default_length() -> usize {
     32
 }
 
+/// Configuration for the `nv unused` command.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UnusedConfig {
+    /// Additional directories to skip when searching for key usage.
+    /// These are merged with the built-in defaults (`.git`, `target`,
+    /// `vendor`, `node_modules`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_dirs: Vec<String>,
+}
+
 /// The `nv.yml` document — the top-level shape of the whole config file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -96,6 +106,9 @@ pub struct Config {
     /// names to ignore on future runs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub false_alarms: BTreeMap<String, Vec<String>>,
+    /// Configuration for the `nv unused` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unused: Option<UnusedConfig>,
     /// Color configuration for CLI output.
     #[serde(default)]
     pub colors: ColorConfig,

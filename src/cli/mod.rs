@@ -13,6 +13,7 @@ mod generate;
 mod leaks;
 mod remove;
 mod set;
+mod unused;
 pub mod wizard;
 
 use anyhow::Result;
@@ -165,6 +166,16 @@ pub enum Command {
         #[arg(short = 'F')]
         file: String,
     },
+
+    /// List env keys not referenced in the codebase.
+    Unused {
+        /// The service name(s) to scan (repeatable).
+        #[arg(short = 's', long = "service")]
+        services: Vec<String>,
+        /// Remove unused keys (with preview).
+        #[arg(long)]
+        clean: bool,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -219,6 +230,7 @@ pub fn run() -> Result<()> {
         Some(Command::Decrypt { key, service, file }) => {
             encrypt::run_decrypt(&cli, key, service, file)
         }
+        Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
         None => crate::tui::launch(&cli),
     }
 }
