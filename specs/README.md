@@ -59,6 +59,8 @@ specs/
     spec.md
   008-unused-command/
     spec.md
+  009-duplicates-command/
+    spec.md
 ```
 
 Number features sequentially (`001`, `002`, …) and use a short, kebab-case slug.

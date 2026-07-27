@@ -6,6 +6,7 @@
 //! `#[command(...)]` attribute configures one flag or subcommand.
 
 pub mod context;
+mod duplicates;
 mod encrypt;
 mod fake_secrets;
 mod find;
@@ -176,6 +177,13 @@ pub enum Command {
         #[arg(long)]
         clean: bool,
     },
+
+    /// List env keys that appear multiple times.
+    Duplicates {
+        /// The service name(s) to scan (repeatable).
+        #[arg(short = 's', long = "service")]
+        services: Vec<String>,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -231,6 +239,7 @@ pub fn run() -> Result<()> {
             encrypt::run_decrypt(&cli, key, service, file)
         }
         Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
+        Some(Command::Duplicates { services }) => duplicates::run(&cli, services),
         None => crate::tui::launch(&cli),
     }
 }
