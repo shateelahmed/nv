@@ -116,18 +116,20 @@ There are two categories of fake secrets:
 
   **Global configuration** (applies to all services):
   ```yaml
-  leaks:
-    false_alarms:
-      - KEY_NAME
+  commands:
+    leaks:
+      false_alarms:
+        - KEY_NAME
   ```
 
   **Per-service configuration** (applies only to that service):
   ```yaml
   services:
-    - name: <service-name>
-      leaks:
-        false_alarms:
-          - KEY_NAME
+    <service-name>:
+      commands:
+        leaks:
+          false_alarms:
+            - KEY_NAME
   ```
 
 - Global and per-service `false_alarms` MUST be merged when scanning a service.

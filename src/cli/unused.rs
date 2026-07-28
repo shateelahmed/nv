@@ -24,9 +24,9 @@ use glob::Pattern;
 
 use super::{Cli, context};
 use crate::color;
+use crate::config;
 use crate::edit::{ChangeSet, FileChange};
 use crate::model::{EnvFile, FileKind, Service};
-use crate::config;
 use crate::parser;
 
 /// Default directories to skip when searching for key usage.
@@ -112,8 +112,6 @@ struct KeyLocation {
     key: String,
 }
 
-
-
 /// Collect all keys from env/example/configmap/secret files.
 fn collect_all_keys(
     services: &[Service],
@@ -129,13 +127,13 @@ fn collect_all_keys(
 
         // Build merged skip_files for this service
         let mut merged_skip_files = global_skip_files.clone();
-        if let Some(cfg) = config {
-            if let Some(service_config) = cfg.services.iter().find(|s| s.name == service.name) {
-                if let Some(ref unused_config) = service_config.unused {
-                    for file_name in &unused_config.skip_files {
-                        merged_skip_files.insert(file_name.clone());
-                    }
-                }
+        if let Some(cfg) = config
+            && let Some(service_config) = cfg.services.get(&service.name)
+            && let Some(ref cmd) = service_config.commands
+            && let Some(ref unused_config) = cmd.unused
+        {
+            for file_name in &unused_config.skip_files {
+                merged_skip_files.insert(file_name.clone());
             }
         }
 
@@ -194,11 +192,10 @@ fn build_skip_files(config_skip_files: &[String]) -> HashSet<String> {
 /// `**` matches any characters including `/` (recursive).
 fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<String>) -> bool {
     for pattern in skip_files {
-        // Try matching with the glob pattern
-        if let Ok(glob_pattern) = Pattern::new(pattern) {
-            if glob_pattern.matches(relative_str) || glob_pattern.matches(name) {
-                return true;
-            }
+        if let Ok(glob_pattern) = Pattern::new(pattern)
+            && (glob_pattern.matches(relative_str) || glob_pattern.matches(name))
+        {
+            return true;
         }
     }
     false
@@ -306,18 +303,18 @@ fn is_env_like_file(path: &Path) -> bool {
     parser::detect_kind(path).is_some()
 }
 
-/// Recursively search the directory tree, removing found keys from `remaining`.
-fn search_dir(
-    dir: &Path,
-    service_root: &Path,
-    ac: &AhoCorasick,
-    remaining: &mut HashSet<usize>,
-    skip_dirs: &HashSet<String>,
-    skip_files: &HashSet<String>,
-    depth: usize,
+/// Static context shared across recursive `search_dir` calls.
+struct SearchCtx<'a> {
+    service_root: &'a Path,
+    ac: &'a AhoCorasick,
+    skip_dirs: &'a HashSet<String>,
+    skip_files: &'a HashSet<String>,
     total_keys: usize,
-    progress: &context::ScanProgress,
-) {
+    progress: &'a context::ScanProgress,
+}
+
+/// Recursively search the directory tree, removing found keys from `remaining`.
+fn search_dir(dir: &Path, remaining: &mut HashSet<usize>, depth: usize, ctx: &SearchCtx<'_>) {
     if depth > MAX_DEPTH || remaining.is_empty() {
         return;
     }
@@ -327,7 +324,7 @@ fn search_dir(
         Err(_) => return,
     };
 
-    progress.inc_dirs();
+    ctx.progress.inc_dirs();
 
     for entry in entries.flatten() {
         if remaining.is_empty() {
@@ -341,15 +338,15 @@ fn search_dir(
             .unwrap_or_default();
 
         if path.is_dir() {
-            if name.starts_with('.') || skip_dirs.contains(name) {
+            if name.starts_with('.') || ctx.skip_dirs.contains(name) {
                 continue;
             }
-            search_dir(&path, service_root, ac, remaining, skip_dirs, skip_files, depth + 1, total_keys, progress);
+            search_dir(&path, remaining, depth + 1, ctx);
         } else if path.is_file() && is_probably_text(&path) {
             // Check if the file should be skipped by matching against its relative path from service root
-            let relative_path = path.strip_prefix(service_root).unwrap_or(&path);
+            let relative_path = path.strip_prefix(ctx.service_root).unwrap_or(&path);
             let relative_str = relative_path.to_str().unwrap_or("");
-            if matches_skip_pattern(relative_str, name, skip_files) {
+            if matches_skip_pattern(relative_str, name, ctx.skip_files) {
                 continue;
             }
 
@@ -359,11 +356,13 @@ fn search_dir(
             }
 
             let display = path.to_str().unwrap_or("?");
-            let found_so_far = total_keys - remaining.len();
-            let remaining_count = total_keys - found_so_far;
-            progress.set_message(format!("{} key(s) remaining | {}", remaining_count, display));
-            scan_file(&path, ac, remaining);
-            progress.inc_files();
+            let remaining_count = ctx.total_keys - (ctx.total_keys - remaining.len());
+            ctx.progress.set_message(format!(
+                "{} key(s) remaining | {}",
+                remaining_count, display
+            ));
+            scan_file(&path, ctx.ac, remaining);
+            ctx.progress.inc_files();
         }
     }
 }
@@ -431,7 +430,8 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let skip_dirs = build_skip_dirs(
         &ctx.config
             .as_ref()
-            .and_then(|c| c.unused.as_ref())
+            .and_then(|c| c.commands.as_ref())
+            .and_then(|cmd| cmd.unused.as_ref())
             .map(|u| u.skip_dirs.clone())
             .unwrap_or_default(),
     );
@@ -439,12 +439,18 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let global_skip_files = build_skip_files(
         &ctx.config
             .as_ref()
-            .and_then(|c| c.unused.as_ref())
+            .and_then(|c| c.commands.as_ref())
+            .and_then(|cmd| cmd.unused.as_ref())
             .map(|u| u.skip_files.clone())
             .unwrap_or_default(),
     );
 
-    let all_keys = collect_all_keys(&ctx.services, service_names, &ctx.config, &global_skip_files);
+    let all_keys = collect_all_keys(
+        &ctx.services,
+        service_names,
+        &ctx.config,
+        &global_skip_files,
+    );
 
     if all_keys.is_empty() {
         eprintln!("No keys found to check.");
@@ -496,21 +502,34 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
 
         // Find service-specific skip_dirs/skip_files for this directory
         if let Some(ref config) = ctx.config {
-            if let Some(service_config) = config.services.iter().find(|s| {
-                ctx.services.iter().any(|svc| svc.path.as_path() == dir && svc.name == s.name)
-            }) {
-                if let Some(ref unused_config) = service_config.unused {
-                    for dir_name in &unused_config.skip_dirs {
-                        merged_skip_dirs.insert(dir_name.clone());
-                    }
-                    for file_name in &unused_config.skip_files {
-                        merged_skip_files.insert(file_name.clone());
-                    }
+            let svc_name = ctx
+                .services
+                .iter()
+                .find(|s| s.path.as_path() == dir)
+                .map(|s| s.name.as_str());
+            if let Some(name) = svc_name
+                && let Some(service_config) = config.services.get(name)
+                && let Some(ref cmd) = service_config.commands
+                && let Some(ref unused_config) = cmd.unused
+            {
+                for dir_name in &unused_config.skip_dirs {
+                    merged_skip_dirs.insert(dir_name.clone());
+                }
+                for file_name in &unused_config.skip_files {
+                    merged_skip_files.insert(file_name.clone());
                 }
             }
         }
 
-        search_dir(dir, dir, &ac, &mut remaining, &merged_skip_dirs, &merged_skip_files, 0, total_keys, &progress);
+        let ctx = SearchCtx {
+            service_root: dir,
+            ac: &ac,
+            skip_dirs: &merged_skip_dirs,
+            skip_files: &merged_skip_files,
+            total_keys,
+            progress: &progress,
+        };
+        search_dir(dir, &mut remaining, 0, &ctx);
         if remaining.is_empty() {
             break;
         }

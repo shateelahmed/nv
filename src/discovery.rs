@@ -63,18 +63,18 @@ pub fn discover_scanned(root: &Path, ignore: &[String]) -> Result<Vec<Service>> 
     Ok(services)
 }
 
-/// Build services from an explicit config list.
+/// Build services from an explicit config map.
 fn discover_explicit(config: &Config, root: &Path) -> Result<Vec<Service>> {
     let mut services = Vec::new();
-    for svc in &config.services {
-        let rel = svc.path.clone().unwrap_or_else(|| svc.name.clone());
+    for (name, svc) in &config.services {
+        let rel = svc.path.clone().unwrap_or_else(|| name.clone());
         let dir = root.join(rel);
         let files = match &svc.files {
             Some(sel) => resolve_configured_files(&dir, sel),
             None => auto_discover_files(&dir)?,
         };
         services.push(Service {
-            name: svc.name.clone(),
+            name: name.clone(),
             path: dir,
             files,
         });

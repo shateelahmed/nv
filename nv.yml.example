@@ -1,0 +1,120 @@
+# nv.yml — Example configuration file
+#
+# Copy this file to your project root as `nv.yml` and customise as needed.
+# All fields are optional except `services_root`.
+
+# ─── Root directory ──────────────────────────────────────────────────────────
+# Path (absolute or relative to nv.yml) that contains your microservice
+# folders.  nv auto-discovers services as subdirectories unless you pin them
+# under `services:` below.
+services_root: ./services
+
+# ─── Service ignore list ─────────────────────────────────────────────────────
+# Folder names listed here are skipped during auto-discovery.  Useful for
+# directories that are not microservices (e.g. shared libraries, tooling).
+# ignore:
+#   - shared
+#   - docs
+
+# ─── Explicit service map ───────────────────────────────────────────────────
+# When populated, nv uses ONLY these entries instead of auto-discovering.
+# Keys are service names (matching folder names under services_root).
+# Values are optional per-service overrides.  A service with no value (`:`)
+# uses all defaults.
+#
+# services:
+#   auth:                        # path defaults to "auth"
+#   payments:
+#     path: payment-service      # explicit relative path
+#
+# Per-service file overrides ─────────────────────────────────────────────────
+# Override which files nv manages for each service.  Useful when your project
+# has non-standard file names or paths.  When omitted, files are discovered
+# by kind (dotenv, configmap, secret) automatically.
+#
+# services:
+#   auth:
+#     path: auth-service
+#     files:
+#       dotenv:
+#         - .env
+#         - docker/.env
+#       dotenv_example:
+#         - .env.example
+#         - .env.testing.example
+#       configmap:
+#         - deploy/configmap.yml
+#       secret:
+#         - deploy/secrets.yml
+#
+# Per-service command configuration ──────────────────────────────────────────
+# Each service can override global command settings.  Keys listed in
+# `commands.leaks.false_alarms` are suppressed during `nv leaks` runs.
+# `commands.unused.skip_dirs` and `commands.unused.skip_files` narrow the
+# search scope for `nv unused` within that service.
+#
+# services:
+#   auth:
+#     commands:
+#       leaks:
+#         false_alarms:
+#           - JWT_SECRET
+#       unused:
+#         skip_dirs:
+#           - generated
+#           - test_fixtures
+#         skip_files:
+#           - custom.js
+#           - docker/**/*.env*
+
+# ─── Secret generation presets ───────────────────────────────────────────────
+# Per-key overrides for `nv generate`.  Each entry maps a key name to a
+# generation preset.  Available preset fields:
+#
+#   length  — character count (default: 32)
+#   format  — hex | base64 | alnum  (default: base64)
+#   charset — custom character set (overrides format; only for alnum-style)
+#
+# secrets:
+#   JWT_SECRET:
+#     length: 64
+#     format: hex
+#   API_KEY:
+#     length: 48
+#     format: base64
+#   SIMPLE_TOKEN:
+#     length: 16
+#     format: alnum
+#   CUSTOM_SECRET:
+#     length: 24
+#     charset: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+# ─── Global command configuration ───────────────────────────────────────────
+# Global defaults for nv commands.  Per-service overrides are merged with
+# these values.
+#
+# commands:
+#   leaks:
+#     false_alarms:
+#       - HEARTBEAT_SECRET
+#   unused:
+#     skip_dirs:
+#       - vendor
+#     skip_files:
+#       - "**/*.test.js"
+#       - "docker/**/*.env*"
+
+# ─── Color configuration ────────────────────────────────────────────────────
+# Customise ANSI colors for CLI output.  Available color names:
+#   black, red, green, yellow, blue, magenta, cyan, white
+#
+# Default values are shown in the comments below.
+#
+# colors:
+#   service_root: magenta  # service folder names
+#   subfolder: blue        # subfolder names within a service
+#   file: cyan             # file names
+#   key: green             # environment variable key names
+#   value: yellow          # environment variable values
+#   added: green           # `+` lines in diff previews
+#   removed: red           # `-` lines in diff previews

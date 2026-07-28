@@ -96,13 +96,14 @@ Skip directories and files can be configured globally or per-service in `nv.yml`
 
 **Global configuration** (applies to all services):
 ```yaml
-unused:
-  skip_dirs:
-    - dist
-    - build
-  skip_files:
-    - custom.js
-    - test.ts
+commands:
+  unused:
+    skip_dirs:
+      - dist
+      - build
+    skip_files:
+      - custom.js
+      - test.ts
 ```
 
 - The configured `skip_dirs` MUST be merged with the built-in defaults
@@ -112,24 +113,26 @@ unused:
 **Per-service configuration** (applies only to that service):
 ```yaml
 services:
-  - name: auth
+  auth:
     path: services/auth
-    unused:
-      skip_dirs:
-        - generated
-        - test_fixtures
-      skip_files:
-        - custom.js
-        - docker/**/*.env*
-  - name: api
+    commands:
+      unused:
+        skip_dirs:
+          - generated
+          - test_fixtures
+        skip_files:
+          - custom.js
+          - docker/**/*.env*
+  api:
     path: services/api
-    unused:
-      skip_dirs:
-        - vendor
-        - legacy
-      skip_files:
-        - test.ts
-        - config/secrets.yml
+    commands:
+      unused:
+        skip_dirs:
+          - vendor
+          - legacy
+        skip_files:
+          - test.ts
+          - config/secrets.yml
 ```
 
 - Global and per-service `skip_dirs` MUST be merged when searching within a

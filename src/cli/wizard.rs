@@ -14,14 +14,22 @@ use crate::config::{self, Config, ServiceConfig, ServiceFiles};
 use crate::discovery;
 use crate::model::FileKind;
 
-/// Handle `nv init`: create (or overwrite) `nv.yml` in the current directory.
+/// Return the path to `nv.yml` in the user's home directory (`~/nv.yml`).
+fn home_config_path() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .map(|h| h.join(config::CONFIG_FILE))
+}
+
+/// Handle `nv init`: create (or overwrite) `~/nv.yml`.
 pub fn run_init(_cli: &Cli) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let config_path = cwd.join(config::CONFIG_FILE);
+    let config_path =
+        home_config_path().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
 
     if config_path.exists() {
         let overwrite = Confirm::new()
-            .with_prompt(format!("{} exists. Overwrite?", config::CONFIG_FILE))
+            .with_prompt(format!("{} exists. Overwrite?", config_path.display()))
             .default(false)
             .interact()?;
         if !overwrite {
@@ -30,7 +38,8 @@ pub fn run_init(_cli: &Cli) -> Result<()> {
         }
     }
 
-    let config = build_interactively(&cwd)?;
+    let base = std::env::current_dir()?;
+    let config = build_interactively(&base)?;
     config::save(&config_path, &config)?;
     eprintln!("Wrote {}", config_path.display());
     Ok(())
@@ -53,7 +62,8 @@ pub fn first_run_if_needed(cwd: &Path) -> Result<Option<PathBuf>> {
     }
 
     let config = build_interactively(cwd)?;
-    let path = cwd.join(config::CONFIG_FILE);
+    let path =
+        home_config_path().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
     config::save(&path, &config)?;
     eprintln!("Wrote {}", path.display());
     Ok(Some(path))
@@ -116,13 +126,14 @@ fn build_interactively(base: &Path) -> Result<Config> {
         } else {
             None
         };
-        config.services.push(ServiceConfig {
-            name: service.name.clone(),
-            path: None,
-            files,
-            leaks: None,
-            unused: None,
-        });
+        config.services.insert(
+            service.name.clone(),
+            ServiceConfig {
+                path: None,
+                files,
+                commands: None,
+            },
+        );
     }
 
     Ok(config)

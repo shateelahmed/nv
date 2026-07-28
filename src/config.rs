@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::color::ColorConfig;
 
@@ -44,20 +44,19 @@ pub struct LeakConfig {
 }
 
 /// An explicitly configured service entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The service name is the map key in `nv.yml`; the value holds optional
+/// overrides for path, files, and per-service command configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServiceConfig {
-    pub name: String,
-    /// Path relative to `services_root`; defaults to `name`.
+    /// Path relative to `services_root`; defaults to the service name (map key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<ServiceFiles>,
-    /// Per-service configuration for the `nv leaks` command.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub leaks: Option<LeakConfig>,
-    /// Per-service configuration for the `nv unused` command.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unused: Option<UnusedConfig>,
+    /// Per-service command-specific configuration (leaks, unused, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<CommandsConfig>,
 }
 
 /// Secret generation format.
@@ -92,6 +91,28 @@ fn default_length() -> usize {
     32
 }
 
+/// Serialize services map so empty `ServiceConfig` values become `null`
+/// (YAML `key:`) instead of `{}`.
+fn serialize_services<S: Serializer>(
+    services: &BTreeMap<String, ServiceConfig>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let is_default = |svc: &ServiceConfig| -> bool {
+        svc.path.is_none() && svc.files.is_none() && svc.commands.is_none()
+    };
+    let count = services.values().filter(|s| !is_default(s)).count();
+    let mut map = serializer.serialize_map(Some(count))?;
+    for (name, svc) in services {
+        if is_default(svc) {
+            map.serialize_entry(name, &())?;
+        } else {
+            map.serialize_entry(name, svc)?;
+        }
+    }
+    map.end()
+}
+
 /// Configuration for the `nv unused` command.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UnusedConfig {
@@ -105,6 +126,17 @@ pub struct UnusedConfig {
     pub skip_files: Vec<String>,
 }
 
+/// Global command-specific configuration, nested under `commands:` in nv.yml.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommandsConfig {
+    /// Configuration for the `nv leaks` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaks: Option<LeakConfig>,
+    /// Configuration for the `nv unused` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unused: Option<UnusedConfig>,
+}
+
 /// The `nv.yml` document — the top-level shape of the whole config file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -113,19 +145,20 @@ pub struct Config {
     /// Folder names to skip when auto-discovering services.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
-    /// Explicit service list; when empty, every subfolder is a service.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub services: Vec<ServiceConfig>,
+    /// Explicit service map; when empty, every subfolder is a service.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        serialize_with = "serialize_services"
+    )]
+    pub services: BTreeMap<String, ServiceConfig>,
     /// Per-key secret generation presets. A `BTreeMap` keeps keys sorted so the
     /// written file has a stable, predictable order.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secrets: BTreeMap<String, SecretPreset>,
-    /// Configuration for the `nv leaks` command.
+    /// Global command-specific configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub leaks: Option<LeakConfig>,
-    /// Configuration for the `nv unused` command.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unused: Option<UnusedConfig>,
+    pub commands: Option<CommandsConfig>,
     /// Color configuration for CLI output.
     #[serde(default)]
     pub colors: ColorConfig,
@@ -149,12 +182,14 @@ impl Config {
     }
 
     /// Check whether a key in a specific service is marked as a false alarm.
-    /// Checks both global `leaks.false_alarms` and per-service `leaks.false_alarms`.
+    /// Checks both global `commands.leaks.false_alarms` and per-service
+    /// `commands.leaks.false_alarms`.
     pub fn is_false_alarm(&self, service: &str, key: &str) -> bool {
         // Check global false_alarms
         let global_match = self
-            .leaks
+            .commands
             .as_ref()
+            .and_then(|cmd| cmd.leaks.as_ref())
             .map(|leaks| leaks.false_alarms.iter().any(|k| k == key))
             .unwrap_or(false);
 
@@ -164,9 +199,9 @@ impl Config {
 
         // Check per-service false_alarms
         self.services
-            .iter()
-            .find(|s| s.name == service)
-            .and_then(|s| s.leaks.as_ref())
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.leaks.as_ref())
             .map(|leaks| leaks.false_alarms.iter().any(|k| k == key))
             .unwrap_or(false)
     }
@@ -174,26 +209,10 @@ impl Config {
     /// Mark a key in a specific service as a false alarm, creating entries as
     /// needed. Returns `true` if the key was newly added.
     pub fn add_false_alarm(&mut self, service: &str, key: &str) -> bool {
-        // Find or create the service config
-        if self.services.iter().find(|s| s.name == service).is_none() {
-            self.services.push(ServiceConfig {
-                name: service.to_string(),
-                path: None,
-                files: None,
-                leaks: None,
-                unused: None,
-            });
-        }
+        let svc = self.services.entry(service.to_string()).or_default();
 
-        let service_config = self
-            .services
-            .iter_mut()
-            .find(|s| s.name == service)
-            .unwrap();
-
-        let leaks = service_config
-            .leaks
-            .get_or_insert_with(|| LeakConfig::default());
+        let cmd = svc.commands.get_or_insert_with(CommandsConfig::default);
+        let leaks = cmd.leaks.get_or_insert_with(LeakConfig::default);
 
         if leaks.false_alarms.iter().any(|k| k == key) {
             false
@@ -235,7 +254,108 @@ pub fn load(path: &Path) -> Result<Config> {
 
 /// Serialize and write a config file (used by `nv init` / the wizard).
 pub fn save(path: &Path, config: &Config) -> Result<()> {
-    let text = serde_yaml::to_string(config).context("serializing config")?;
+    let raw = serde_yaml::to_string(config).context("serializing config")?;
+    // serde_yaml writes `key: null` for empty map values. The cleaner YAML
+    // form is `key:` (bare key with no value). Process line by line to avoid
+    // touching unrelated nulls.
+    let mut text: String = raw
+        .lines()
+        .map(|line| {
+            if line.starts_with("  ") && line.ends_with(": null") {
+                line[..line.len() - 4].trim_end().to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.push('\n');
     std::fs::write(path, text).with_context(|| format!("writing config {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_false_alarm_from_commands() {
+        let yaml = r#"
+services_root: .
+commands:
+  leaks:
+    false_alarms:
+      - MY_OFFER_CHANNEL_ID
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.is_false_alarm("any-service", "MY_OFFER_CHANNEL_ID"));
+        assert!(!config.is_false_alarm("any-service", "OTHER_KEY"));
+    }
+
+    #[test]
+    fn global_and_per_service_false_alarms_merge() {
+        let yaml = r#"
+services_root: .
+commands:
+  leaks:
+    false_alarms:
+      - GLOBAL_KEY
+services:
+  auth:
+    commands:
+      leaks:
+        false_alarms:
+          - LOCAL_KEY
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.is_false_alarm("auth", "GLOBAL_KEY"));
+        assert!(config.is_false_alarm("auth", "LOCAL_KEY"));
+        assert!(!config.is_false_alarm("other", "LOCAL_KEY"));
+    }
+
+    #[test]
+    fn empty_service_config_serializes_as_null() {
+        let yaml = r#"
+services_root: .
+services:
+  auth:
+  billing:
+    path: pay
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        // serde_yaml produces `auth: null`; save() post-processes to `auth:`
+        assert!(
+            serialized.contains("auth: null\n"),
+            "serde_yaml should produce 'auth: null', got:\n{serialized}"
+        );
+        assert!(
+            serialized.contains("billing:\n    path: pay"),
+            "service with path should keep it"
+        );
+    }
+
+    #[test]
+    fn save_strips_null_for_empty_services() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nv.yml");
+        let yaml = r#"
+services_root: .
+services:
+  auth:
+  billing:
+    path: pay
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        save(&path, &config).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("  auth:\n"),
+            "should write 'auth:' not 'auth: null', got:\n{written}"
+        );
+        assert!(
+            !written.contains("auth: null"),
+            "should not contain 'auth: null'"
+        );
+    }
 }
