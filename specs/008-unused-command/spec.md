@@ -120,8 +120,7 @@ services:
         - test_fixtures
       skip_files:
         - custom.js
-        - docker/.env
-        - docker/app/.env.example
+        - docker/**/*.env*
   - name: api
     path: services/api
     unused:
@@ -137,6 +136,15 @@ services:
   service.
 - Global and per-service `skip_files` MUST be merged when searching within a
   service.
+- `skip_files` entries support glob patterns:
+  - `*` matches any characters except `/` (within a single path segment)
+  - `**` matches any characters including `/` (recursive across directories)
+  - `?` matches a single character
+- Examples:
+  - `docker/.env` — matches exactly `docker/.env`
+  - `docker/*.env` — matches `docker/.env`, `docker/app.env`, etc.
+  - `docker/**/*.env*` — matches all env files in `docker/` and any subfolder
+  - `*.test.js` — matches any `.test.js` file at any depth
 - `skip_files` entries are matched against the relative path from the service
   root directory (e.g., `docker/.env`, `docker/app/.env.example`).
 - `skip_files` entries can also match just the file name (e.g., `custom.js`).
@@ -220,5 +228,6 @@ Uses global flags: `--no-config`, `--root`, `--all`, `--dry-run`, `--yes`.
 - `--clean` with `--dry-run` shows the diff without writing.
 - Service-specific `skip_dirs` and `skip_files` are additive to global
   `skip_dirs`/`skip_files` and defaults.
-- `skip_files` entries can match either the full relative path from the service
-  root (e.g., `docker/.env`) or just the file name (e.g., `.env`).
+- `skip_files` entries support glob patterns (`*`, `**`, `?`) for flexible
+  file matching. For example, `docker/**/*.env*` matches all env files in
+  `docker/` and any subfolder.

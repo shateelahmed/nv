@@ -20,6 +20,7 @@ use std::path::Path;
 
 use aho_corasick::{AhoCorasick, MatchKind};
 use anyhow::Result;
+use glob::Pattern;
 
 use super::{Cli, context};
 use crate::color;
@@ -146,11 +147,11 @@ fn collect_all_keys(
                 continue;
             }
 
-            // Skip files matching skip_files (by relative path from service root or by name)
+            // Skip files matching skip_files patterns
             let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
             let relative_str = relative.to_str().unwrap_or("");
             let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if merged_skip_files.contains(relative_str) || merged_skip_files.contains(name) {
+            if matches_skip_pattern(relative_str, name, &merged_skip_files) {
                 continue;
             }
 
@@ -186,6 +187,21 @@ fn build_skip_files(config_skip_files: &[String]) -> HashSet<String> {
         skip.insert(file.clone());
     }
     skip
+}
+
+/// Check if a file path matches any skip_files pattern.
+/// Supports glob patterns: `*` matches any characters except `/`,
+/// `**` matches any characters including `/` (recursive).
+fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<String>) -> bool {
+    for pattern in skip_files {
+        // Try matching with the glob pattern
+        if let Ok(glob_pattern) = Pattern::new(pattern) {
+            if glob_pattern.matches(relative_str) || glob_pattern.matches(name) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Cheap extension / name-based text filter. Falls back to a null-byte check
@@ -333,7 +349,7 @@ fn search_dir(
             // Check if the file should be skipped by matching against its relative path from service root
             let relative_path = path.strip_prefix(service_root).unwrap_or(&path);
             let relative_str = relative_path.to_str().unwrap_or("");
-            if skip_files.contains(relative_str) || skip_files.contains(name) {
+            if matches_skip_pattern(relative_str, name, skip_files) {
                 continue;
             }
 
