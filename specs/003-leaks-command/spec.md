@@ -87,12 +87,25 @@ each one.
 
 - `nv leaks --false-alarm <KEY>` MUST mark the named key as a false alarm for
   every matching leak across all scanned files.
-- False alarms are stored in `nv.yml` under a `false_alarms` top-level key:
+- False alarms can be configured globally or per-service in `nv.yml`.
+
+  **Global configuration** (applies to all services):
   ```yaml
-  false_alarms:
-    <service-name>:
+  leaks:
+    false_alarms:
       - KEY_NAME
   ```
+
+  **Per-service configuration** (applies only to that service):
+  ```yaml
+  services:
+    - name: <service-name>
+      leaks:
+        false_alarms:
+          - KEY_NAME
+  ```
+
+- Global and per-service `false_alarms` MUST be merged when scanning a service.
 - On subsequent runs, keys listed in `false_alarms` MUST be silently skipped.
 - If the key is not found in any leak, the command MUST exit with an error.
 

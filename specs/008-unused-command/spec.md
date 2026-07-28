@@ -61,17 +61,22 @@ which keys are actually referenced in the codebase versus which are stale.
   prefix key.
 - For YAML files, `nv unused` MUST scan all nested keys at any depth (e.g.,
   `data.DB_HOST`, `stringData.API_KEY`, or arbitrarily nested mappings).
+- The search MUST skip env-like files (dotenv, dotenv_example, configmap, secret)
+  to avoid counting a key as "used" just because it appears in another env file.
 - The search MUST skip the following directories by default:
   - `.git`
   - `target`
   - `vendor`
   - `node_modules`
   - `logs`
-- Additional skip directories can be configured in `nv.yml` (see Configuration).
+- Additional skip directories and files can be configured in `nv.yml` (see Configuration).
 - A key is considered "unused" if it does NOT appear in any source file outside
   of the definition file itself.
 - Results MUST be grouped by service, then by file, in the same hierarchical
   colorized format as `nv find` and `nv leaks`.
+- After scanning, the command MUST print a summary line showing the number of
+  files scanned, folders scanned, and keys found (e.g., "Scanned 15 files in 3
+  folders for 142 keys.").
 
 ### Service filtering
 
@@ -87,18 +92,56 @@ which keys are actually referenced in the codebase versus which are stale.
 
 ### Configuration
 
-The skip list can be customized in `nv.yml`:
+Skip directories and files can be configured globally or per-service in `nv.yml`.
 
+**Global configuration** (applies to all services):
 ```yaml
 unused:
   skip_dirs:
     - dist
     - build
+  skip_files:
+    - custom.js
+    - test.ts
 ```
 
 - The configured `skip_dirs` MUST be merged with the built-in defaults
-  (`.git`, `target`, `vendor`, `node_modules`).
-- If `unused.skip_dirs` is not specified, only the defaults are used.
+  (`.git`, `target`, `vendor`, `node_modules`, `logs`).
+- The configured `skip_files` has no built-in defaults.
+
+**Per-service configuration** (applies only to that service):
+```yaml
+services:
+  - name: auth
+    path: services/auth
+    unused:
+      skip_dirs:
+        - generated
+        - test_fixtures
+      skip_files:
+        - custom.js
+        - docker/.env
+        - docker/app/.env.example
+  - name: api
+    path: services/api
+    unused:
+      skip_dirs:
+        - vendor
+        - legacy
+      skip_files:
+        - test.ts
+        - config/secrets.yml
+```
+
+- Global and per-service `skip_dirs` MUST be merged when searching within a
+  service.
+- Global and per-service `skip_files` MUST be merged when searching within a
+  service.
+- `skip_files` entries are matched against the relative path from the service
+  root directory (e.g., `docker/.env`, `docker/app/.env.example`).
+- `skip_files` entries can also match just the file name (e.g., `custom.js`).
+- If a service has no `unused.skip_dirs` or `unused.skip_files`, only the global
+  lists and defaults apply.
 
 ### CLI surface
 
@@ -136,8 +179,9 @@ Uses global flags: `--no-config`, `--root`, `--all`, `--dry-run`, `--yes`.
 - [ ] Given a key `db_host` (lowercase) defined in a file and `DB_HOST`
       (uppercase) referenced in code, when `nv unused` is run, then `db_host`
       IS listed (case-sensitive mismatch).
-- [ ] Keys in `.git`, `target`, `vendor`, or `node_modules` directories are
-      NOT considered when searching for key usage.
+- [ ] Given a key `DB_HOST` defined in `.env` and also appearing in another
+      `.env` file but NOT in source code, when `nv unused` is run, then
+      `DB_HOST` IS listed (env-like files are excluded from search).
 - [ ] Given keys `PHP_INI_LOG_ERRORS` and `PHP_INI_LOG_ERRORS_MAX_LEN` both
       defined in configmap files, and both referenced in source code, when
       `nv unused` is run, then NEITHER is listed (longest-match semantics
@@ -145,6 +189,24 @@ Uses global flags: `--no-config`, `--root`, `--all`, `--dry-run`, `--yes`.
 - [ ] Given `--clean`, when confirmed, unused keys are removed from all scanned
       files.
 - [ ] Given `--clean` with no unused keys, "Nothing to change." is printed.
+- [ ] Given a service `auth` with `unused.skip_dirs: [generated]` and a key
+      defined in source code only within `auth/generated/`, when `nv unused` is
+      run, then that key IS listed as unused (the `generated` directory is
+      skipped for that service).
+- [ ] Given a service `auth` with `unused.skip_files: [custom.js]` and a key
+      defined in source code only within `auth/custom.js`, when `nv unused` is
+      run, then that key IS listed as unused (the `custom.js` file is
+      skipped for that service).
+- [ ] Given a service `auth` with `unused.skip_files: [docker/.env]` and a key
+      defined in source code only within `auth/docker/.env`, when `nv unused` is
+      run, then that key IS listed as unused (the `docker/.env` file is
+      skipped for that service).
+- [ ] Given global `unused.skip_dirs: [dist]` and a service `api` with
+      `unused.skip_dirs: [legacy]`, when searching within `api`, both `dist`
+      and `legacy` directories are skipped.
+- [ ] Given global `unused.skip_files: [test.js]` and a service `api` with
+      `unused.skip_files: [old.js]`, when searching within `api`, both `test.js`
+      and `old.js` files are skipped.
 
 ## Edge cases
 
@@ -156,3 +218,7 @@ Uses global flags: `--no-config`, `--root`, `--all`, `--dry-run`, `--yes`.
 - Binary files are skipped during search.
 - Very large files are handled without excessive memory usage.
 - `--clean` with `--dry-run` shows the diff without writing.
+- Service-specific `skip_dirs` and `skip_files` are additive to global
+  `skip_dirs`/`skip_files` and defaults.
+- `skip_files` entries can match either the full relative path from the service
+  root (e.g., `docker/.env`) or just the file name (e.g., `.env`).

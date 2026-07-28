@@ -50,8 +50,13 @@ Commands that scan multiple files (e.g., `nv leaks`, `nv fake-secrets`,
    ```
    Scanned N files in M folders.
    ```
-   Where `N` is the number of files scanned and `M` is the number of
-   directories traversed. Use singular "file" or "folder" when count is 1.
+   Or for commands that also count keys (e.g., `nv unused`):
+   ```
+   Scanned N files in M folders for K keys.
+   ```
+   Where `N` is the number of files scanned, `M` is the number of
+   directories traversed, and `K` is the number of keys found. Use singular
+   "file", "folder", or "key" when count is 1.
 
 3. **Cleanup**: The spinner MUST be cleared before printing results using
    `finish_and_clear()`.

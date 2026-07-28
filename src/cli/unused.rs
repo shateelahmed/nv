@@ -25,10 +25,12 @@ use super::{Cli, context};
 use crate::color;
 use crate::edit::{ChangeSet, FileChange};
 use crate::model::{EnvFile, FileKind, Service};
+use crate::config;
 use crate::parser;
 
 /// Default directories to skip when searching for key usage.
 const DEFAULT_SKIP_DIRS: &[&str] = &[".git", "target", "vendor", "node_modules", "logs"];
+const DEFAULT_SKIP_FILES: &[&str] = &[];
 
 /// Maximum recursion depth for directory traversal.
 const MAX_DEPTH: usize = 20;
@@ -112,12 +114,30 @@ struct KeyLocation {
 
 
 /// Collect all keys from env/example/configmap/secret files.
-fn collect_all_keys(services: &[Service], service_filter: &[String]) -> Vec<KeyLocation> {
+fn collect_all_keys(
+    services: &[Service],
+    service_filter: &[String],
+    config: &Option<config::Config>,
+    global_skip_files: &HashSet<String>,
+) -> Vec<KeyLocation> {
     let mut keys = Vec::new();
     for service in services {
         if !service_filter.is_empty() && !service_filter.iter().any(|s| s == &service.name) {
             continue;
         }
+
+        // Build merged skip_files for this service
+        let mut merged_skip_files = global_skip_files.clone();
+        if let Some(cfg) = config {
+            if let Some(service_config) = cfg.services.iter().find(|s| s.name == service.name) {
+                if let Some(ref unused_config) = service_config.unused {
+                    for file_name in &unused_config.skip_files {
+                        merged_skip_files.insert(file_name.clone());
+                    }
+                }
+            }
+        }
+
         for file in &service.files {
             if !matches!(
                 file.kind,
@@ -125,6 +145,15 @@ fn collect_all_keys(services: &[Service], service_filter: &[String]) -> Vec<KeyL
             ) {
                 continue;
             }
+
+            // Skip files matching skip_files (by relative path from service root or by name)
+            let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
+            let relative_str = relative.to_str().unwrap_or("");
+            let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if merged_skip_files.contains(relative_str) || merged_skip_files.contains(name) {
+                continue;
+            }
+
             let content = std::fs::read_to_string(&file.path).unwrap_or_default();
             let pairs = parser::parse(&content, file.kind);
             for pair in pairs {
@@ -142,10 +171,19 @@ fn collect_all_keys(services: &[Service], service_filter: &[String]) -> Vec<KeyL
 }
 
 /// Build the set of directories to skip when searching.
-fn build_skip_set(config_skip_dirs: &[String]) -> HashSet<String> {
+fn build_skip_dirs(config_skip_dirs: &[String]) -> HashSet<String> {
     let mut skip: HashSet<String> = DEFAULT_SKIP_DIRS.iter().map(|s| s.to_string()).collect();
     for dir in config_skip_dirs {
         skip.insert(dir.clone());
+    }
+    skip
+}
+
+/// Build the set of files to skip when searching.
+fn build_skip_files(config_skip_files: &[String]) -> HashSet<String> {
+    let mut skip: HashSet<String> = DEFAULT_SKIP_FILES.iter().map(|s| s.to_string()).collect();
+    for file in config_skip_files {
+        skip.insert(file.clone());
     }
     skip
 }
@@ -247,12 +285,19 @@ fn scan_file(path: &Path, ac: &AhoCorasick, remaining: &mut HashSet<usize>) {
     }
 }
 
+/// Check if a file is an env-like file that should be excluded from search.
+fn is_env_like_file(path: &Path) -> bool {
+    parser::detect_kind(path).is_some()
+}
+
 /// Recursively search the directory tree, removing found keys from `remaining`.
 fn search_dir(
     dir: &Path,
+    service_root: &Path,
     ac: &AhoCorasick,
     remaining: &mut HashSet<usize>,
     skip_dirs: &HashSet<String>,
+    skip_files: &HashSet<String>,
     depth: usize,
     total_keys: usize,
     progress: &context::ScanProgress,
@@ -283,8 +328,20 @@ fn search_dir(
             if name.starts_with('.') || skip_dirs.contains(name) {
                 continue;
             }
-            search_dir(&path, ac, remaining, skip_dirs, depth + 1, total_keys, progress);
+            search_dir(&path, service_root, ac, remaining, skip_dirs, skip_files, depth + 1, total_keys, progress);
         } else if path.is_file() && is_probably_text(&path) {
+            // Check if the file should be skipped by matching against its relative path from service root
+            let relative_path = path.strip_prefix(service_root).unwrap_or(&path);
+            let relative_str = relative_path.to_str().unwrap_or("");
+            if skip_files.contains(relative_str) || skip_files.contains(name) {
+                continue;
+            }
+
+            // Skip env-like files (dotenv, dotenv_example, configmap, secret)
+            if is_env_like_file(&path) {
+                continue;
+            }
+
             let display = path.to_str().unwrap_or("?");
             let found_so_far = total_keys - remaining.len();
             let remaining_count = total_keys - found_so_far;
@@ -355,7 +412,7 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(ctx.source);
 
-    let skip_dirs = build_skip_set(
+    let skip_dirs = build_skip_dirs(
         &ctx.config
             .as_ref()
             .and_then(|c| c.unused.as_ref())
@@ -363,7 +420,15 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
             .unwrap_or_default(),
     );
 
-    let all_keys = collect_all_keys(&ctx.services, service_names);
+    let global_skip_files = build_skip_files(
+        &ctx.config
+            .as_ref()
+            .and_then(|c| c.unused.as_ref())
+            .map(|u| u.skip_files.clone())
+            .unwrap_or_default(),
+    );
+
+    let all_keys = collect_all_keys(&ctx.services, service_names, &ctx.config, &global_skip_files);
 
     if all_keys.is_empty() {
         eprintln!("No keys found to check.");
@@ -393,29 +458,43 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     // Set up progress reporting.
     let progress = context::ScanProgress::start_with_keys(unique_keys.len());
 
-    // Determine which directories to search:
+    // Determine which service directories to search:
     // - If `-s` flag is provided, only search within those service directories
-    // - Otherwise, search the services_root directory (from nv.yml config)
-    let services_root;
+    // - Otherwise, search all discovered service directories
     let search_dirs: Vec<&Path> = if !service_names.is_empty() {
         ctx.services
             .iter()
             .filter(|s| service_names.iter().any(|sn| sn == &s.name))
             .map(|s| s.path.as_path())
             .collect()
-    } else if let Some(ref config) = ctx.config {
-        // Use the services_root directory from config
-        services_root = config.services_root_abs(&ctx.base);
-        vec![services_root.as_path()]
     } else {
-        // Fallback to base when no config
-        vec![ctx.base.as_path()]
+        ctx.services.iter().map(|s| s.path.as_path()).collect()
     };
 
-    // Search each directory.
+    // Search each service directory.
     let total_keys = unique_keys.len();
     for dir in search_dirs {
-        search_dir(dir, &ac, &mut remaining, &skip_dirs, 0, total_keys, &progress);
+        // Merge global skip_dirs/skip_files with service-specific ones
+        let mut merged_skip_dirs = skip_dirs.clone();
+        let mut merged_skip_files = global_skip_files.clone();
+
+        // Find service-specific skip_dirs/skip_files for this directory
+        if let Some(ref config) = ctx.config {
+            if let Some(service_config) = config.services.iter().find(|s| {
+                ctx.services.iter().any(|svc| svc.path.as_path() == dir && svc.name == s.name)
+            }) {
+                if let Some(ref unused_config) = service_config.unused {
+                    for dir_name in &unused_config.skip_dirs {
+                        merged_skip_dirs.insert(dir_name.clone());
+                    }
+                    for file_name in &unused_config.skip_files {
+                        merged_skip_files.insert(file_name.clone());
+                    }
+                }
+            }
+        }
+
+        search_dir(dir, dir, &ac, &mut remaining, &merged_skip_dirs, &merged_skip_files, 0, total_keys, &progress);
         if remaining.is_empty() {
             break;
         }
@@ -564,15 +643,25 @@ mod tests {
     }
 
     #[test]
-    fn build_skip_set_merges_defaults() {
+    fn build_skip_dirs_merges_defaults() {
         let config_skip = vec!["dist".to_string(), "build".to_string()];
-        let skip = build_skip_set(&config_skip);
+        let skip = build_skip_dirs(&config_skip);
         assert!(skip.contains(".git"));
         assert!(skip.contains("target"));
         assert!(skip.contains("vendor"));
         assert!(skip.contains("node_modules"));
+        assert!(skip.contains("logs"));
         assert!(skip.contains("dist"));
         assert!(skip.contains("build"));
+    }
+
+    #[test]
+    fn build_skip_files_merges_defaults() {
+        let config_skip = vec!["custom.js".to_string(), "test.ts".to_string()];
+        let skip = build_skip_files(&config_skip);
+        assert!(skip.contains("custom.js"));
+        assert!(skip.contains("test.ts"));
+        assert_eq!(skip.len(), 2);
     }
 
     #[test]

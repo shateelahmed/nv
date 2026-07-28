@@ -120,6 +120,8 @@ fn build_interactively(base: &Path) -> Result<Config> {
             name: service.name.clone(),
             path: None,
             files,
+            leaks: None,
+            unused: None,
         });
     }
 

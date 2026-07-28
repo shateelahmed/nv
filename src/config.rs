@@ -34,6 +34,15 @@ pub struct ServiceFiles {
     pub secret: Option<Vec<String>>,
 }
 
+/// Configuration for the `nv leaks` command.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LeakConfig {
+    /// False alarms reported by `nv leaks`. Keys in this list are skipped
+    /// on future runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub false_alarms: Vec<String>,
+}
+
 /// An explicitly configured service entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
@@ -43,6 +52,12 @@ pub struct ServiceConfig {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<ServiceFiles>,
+    /// Per-service configuration for the `nv leaks` command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaks: Option<LeakConfig>,
+    /// Per-service configuration for the `nv unused` command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unused: Option<UnusedConfig>,
 }
 
 /// Secret generation format.
@@ -85,6 +100,9 @@ pub struct UnusedConfig {
     /// `vendor`, `node_modules`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skip_dirs: Vec<String>,
+    /// Files to skip when searching for key usage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_files: Vec<String>,
 }
 
 /// The `nv.yml` document — the top-level shape of the whole config file.
@@ -102,10 +120,9 @@ pub struct Config {
     /// written file has a stable, predictable order.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub secrets: BTreeMap<String, SecretPreset>,
-    /// False alarms reported by `nv leaks`. Maps service name → list of key
-    /// names to ignore on future runs.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub false_alarms: BTreeMap<String, Vec<String>>,
+    /// Configuration for the `nv leaks` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaks: Option<LeakConfig>,
     /// Configuration for the `nv unused` command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unused: Option<UnusedConfig>,
@@ -132,21 +149,56 @@ impl Config {
     }
 
     /// Check whether a key in a specific service is marked as a false alarm.
+    /// Checks both global `leaks.false_alarms` and per-service `leaks.false_alarms`.
     pub fn is_false_alarm(&self, service: &str, key: &str) -> bool {
-        self.false_alarms
-            .get(service)
-            .map(|keys| keys.iter().any(|k| k == key))
+        // Check global false_alarms
+        let global_match = self
+            .leaks
+            .as_ref()
+            .map(|leaks| leaks.false_alarms.iter().any(|k| k == key))
+            .unwrap_or(false);
+
+        if global_match {
+            return true;
+        }
+
+        // Check per-service false_alarms
+        self.services
+            .iter()
+            .find(|s| s.name == service)
+            .and_then(|s| s.leaks.as_ref())
+            .map(|leaks| leaks.false_alarms.iter().any(|k| k == key))
             .unwrap_or(false)
     }
 
     /// Mark a key in a specific service as a false alarm, creating entries as
     /// needed. Returns `true` if the key was newly added.
     pub fn add_false_alarm(&mut self, service: &str, key: &str) -> bool {
-        let keys = self.false_alarms.entry(service.to_string()).or_default();
-        if keys.iter().any(|k| k == key) {
+        // Find or create the service config
+        if self.services.iter().find(|s| s.name == service).is_none() {
+            self.services.push(ServiceConfig {
+                name: service.to_string(),
+                path: None,
+                files: None,
+                leaks: None,
+                unused: None,
+            });
+        }
+
+        let service_config = self
+            .services
+            .iter_mut()
+            .find(|s| s.name == service)
+            .unwrap();
+
+        let leaks = service_config
+            .leaks
+            .get_or_insert_with(|| LeakConfig::default());
+
+        if leaks.false_alarms.iter().any(|k| k == key) {
             false
         } else {
-            keys.push(key.to_string());
+            leaks.false_alarms.push(key.to_string());
             true
         }
     }
