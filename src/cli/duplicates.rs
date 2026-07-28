@@ -9,7 +9,8 @@ use std::fs;
 use anyhow::Result;
 
 use super::{Cli, context};
-use crate::color::{self, ColorConfig, colorize};
+use crate::color::{self, ColorConfig};
+use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::{FileKind, Service};
 use crate::parser;
 
@@ -81,11 +82,7 @@ pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
     }
 
     let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
+    let colors = ctx.colors();
 
     print_duplicates(&duplicates_by_service, &colors, use_color);
 
@@ -141,10 +138,6 @@ fn find_duplicates(service: &Service, target_kinds: &[FileKind]) -> Vec<Duplicat
 
 /// Print duplicates grouped by service, then by file, with tree-style vertical
 /// lines. Follows the same uniform format as `nv leaks`.
-///
-/// Each file is shown with its full path relative to the service root.
-/// Tree lines are colored to match the text they lead to.
-/// Counts are shown next to service names and file names.
 fn print_duplicates(
     duplicates_by_service: &BTreeMap<String, Vec<DuplicateKey>>,
     colors: &ColorConfig,
@@ -152,88 +145,56 @@ fn print_duplicates(
 ) {
     let mut total = 0;
 
-    for (service, dupes) in duplicates_by_service {
-        // Count duplicates in this service.
-        let service_count = dupes.len();
-        total += service_count;
+    let services: Vec<TreeService> = duplicates_by_service
+        .iter()
+        .map(|(service_name, dupes)| {
+            let service_count = dupes.len();
+            total += service_count;
 
-        // Print service name with count.
-        println!(
-            "{} {}",
-            colorize(&format!("{}/", service), colors.service_root, use_color),
-            colorize(
-                &format!("({})", service_count),
-                colors.service_root,
-                use_color
-            )
-        );
-
-        // Group duplicates by file for this service.
-        let mut file_groups: BTreeMap<String, Vec<&DuplicateKey>> = BTreeMap::new();
-        for dupe in dupes {
-            // All locations are in the same file, so just use the first one.
-            if let Some(loc) = dupe.locations.first() {
-                file_groups
-                    .entry(loc.file_display.clone())
-                    .or_default()
-                    .push(dupe);
+            // Group duplicates by file for this service.
+            let mut file_groups: BTreeMap<String, Vec<&DuplicateKey>> = BTreeMap::new();
+            for dupe in dupes {
+                if let Some(loc) = dupe.locations.first() {
+                    file_groups
+                        .entry(loc.file_display.clone())
+                        .or_default()
+                        .push(dupe);
+                }
             }
-        }
 
-        let file_count = file_groups.len();
-        for (i, (file_display, file_dupes)) in file_groups.iter().enumerate() {
-            let is_last_file = i + 1 == file_count;
-            let branch = if is_last_file {
-                "└── "
-            } else {
-                "├── "
-            };
-            let pipe = if is_last_file { "    " } else { "│   " };
+            let tree_files: Vec<TreeFile> = file_groups
+                .into_iter()
+                .map(|(file_name, file_dupes)| {
+                    let items: Vec<TreeItem> = file_dupes
+                        .iter()
+                        .map(|d| {
+                            let value = d.locations.first().map(|l| l.value.as_str()).unwrap_or("");
+                            TreeItem {
+                                label: format!("{} = {}", d.key, value),
+                                color: colors.key,
+                            }
+                        })
+                        .collect();
+                    TreeFile {
+                        name: file_name,
+                        count: items.len(),
+                        items,
+                    }
+                })
+                .collect();
 
-            // File-level branch and pipe in service color (parent node).
-            print!("{}", colorize(branch, colors.service_root, use_color));
-            println!(
-                "{} {}",
-                colorize(file_display, colors.file, use_color),
-                colorize(&format!("({})", file_dupes.len()), colors.file, use_color)
-            );
-
-            // Print each duplicate key in this file.
-            for (j, dupe) in file_dupes.iter().enumerate() {
-                let is_last_key = j + 1 == file_dupes.len();
-                let key_branch = if is_last_key {
-                    "└── "
-                } else {
-                    "├── "
-                };
-
-                // All locations are in the same file, use the first value.
-                let value = dupe
-                    .locations
-                    .first()
-                    .map(|l| l.value.as_str())
-                    .unwrap_or("");
-
-                // Pipe in service color (continuation below service), branch in file color.
-                print!("{}", colorize(pipe, colors.service_root, use_color));
-                print!("{}", colorize(key_branch, colors.file, use_color));
-                println!(
-                    "{} = {}",
-                    colorize(&dupe.key, colors.key, use_color),
-                    colorize(value, colors.value, use_color)
-                );
+            TreeService {
+                name: service_name.clone(),
+                count: service_count,
+                files: tree_files,
             }
-        }
-    }
+        })
+        .collect();
 
-    eprintln!(
-        "\n{}",
-        colorize(
-            &format!("{} duplicate key(s) found.", total),
-            colors.service_root,
-            use_color
-        )
-    );
+    let mut out = Output::Stdout;
+    display::render_tree(&services, colors, use_color, &mut out);
+
+    eprintln!("\n{} duplicate key(s) found.", total);
 }
 
 #[cfg(test)]

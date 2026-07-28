@@ -4,6 +4,8 @@
 //! `#` comments. To preserve formatting we never rebuild the whole file; we
 //! find the one line that defines a key and rewrite just that line.
 
+use std::borrow::Cow;
+
 use super::ParsedPair;
 
 /// Split a dotenv line into an optional `(key, value)` pair.
@@ -27,7 +29,7 @@ fn parse_line(line: &str) -> Option<(String, String)> {
         return None;
     }
     let raw_value = &without_export[eq + 1..];
-    Some((key.to_string(), unquote(raw_value.trim())))
+    Some((key.to_string(), unquote(raw_value.trim()).into_owned()))
 }
 
 /// A valid key starts with a letter or `_`, then letters/digits/`_`/`.`.
@@ -42,16 +44,16 @@ fn is_valid_key(key: &str) -> bool {
 }
 
 /// Strip a single layer of matching single or double quotes.
-fn unquote(value: &str) -> String {
+fn unquote(value: &str) -> Cow<'_, str> {
     let bytes = value.as_bytes();
     if bytes.len() >= 2 {
         let first = bytes[0];
         let last = bytes[bytes.len() - 1];
         if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return value[1..value.len() - 1].to_string();
+            return Cow::Owned(value[1..value.len() - 1].to_string());
         }
     }
-    value.to_string()
+    Cow::Borrowed(value)
 }
 
 /// Quote a value for writing if it contains characters that would break a bare
@@ -85,11 +87,7 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
 ///
 /// If the key is not present, the content is returned unchanged.
 pub fn remove_key(content: &str, key: &str) -> String {
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = crate::parser::detect_newline(content);
     let ends_with_newline = content.ends_with('\n') || content.is_empty();
 
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
@@ -119,11 +117,7 @@ pub fn remove_key(content: &str, key: &str) -> String {
 /// appending a new one. Comments and blank lines are preserved.
 pub fn set_value(content: &str, key: &str, value: &str) -> String {
     // Match the file's existing line ending so we don't mix \n and \r\n.
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = crate::parser::detect_newline(content);
     // Remember whether the original ended in a newline so we can restore it.
     // A brand-new (empty) file should end with one too.
     let ends_with_newline = content.ends_with('\n') || content.is_empty();

@@ -101,11 +101,7 @@ pub fn run(
     }
 
     let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
+    let colors = ctx.colors();
     context::preview_and_apply(cli, &changes, &colors, use_color)
 }
 

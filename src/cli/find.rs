@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 
 use super::{Cli, context};
-use crate::color::{self, AnsiColor, ColorConfig, colorize};
+use crate::color::{self, AnsiColor, ColorConfig};
+use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::EnvKey;
 use crate::search;
 
@@ -24,11 +25,7 @@ pub fn run(cli: &Cli, query: &str) -> Result<()> {
     }
 
     let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
+    let colors = ctx.colors();
 
     print_legend(&colors, use_color);
     print_hierarchical_output(&results, &colors, use_color);
@@ -65,22 +62,6 @@ fn colorize_color_name(color: AnsiColor, use_color: bool) -> String {
 }
 
 /// Print the hierarchical grouped output with tree-style vertical lines.
-///
-/// Each file is shown with its full path relative to the service root,
-/// e.g. `docker/.env` instead of grouping by subfolder.
-///
-/// Tree lines (`├──`, `└──`, `│`) are colored to match the text they lead to:
-/// - File-level branches: file color (cyan)
-/// - Key-level branches: key color (green)
-///
-/// ```text
-/// service_name/
-/// ├── docker/.env
-/// │   ├── DB_PASSWORD = secret
-/// │   └── API_KEY = sk-test
-/// └── configmap.yml
-///     └── DB_PASSWORD: secret
-/// ```
 fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_color: bool) {
     // Group by service, then by file display path.
     let mut grouped: BTreeMap<String, BTreeMap<String, Vec<&EnvKey>>> = BTreeMap::new();
@@ -94,45 +75,37 @@ fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_colo
             .push(key);
     }
 
-    for (service, files) in &grouped {
-        // Print service name (root folder).
-        println!(
-            "{}",
-            colorize(&format!("{}/", service), colors.service_root, use_color)
-        );
-
-        let file_count = files.len();
-        for (i, (file_display, keys)) in files.iter().enumerate() {
-            let is_last_file = i + 1 == file_count;
-            let branch = if is_last_file {
-                "└── "
-            } else {
-                "├── "
-            };
-            let pipe = if is_last_file { "    " } else { "│   " };
-
-            // File-level branch and pipe in service color (parent node).
-            print!("{}", colorize(branch, colors.service_root, use_color));
-            println!("{}", colorize(file_display, colors.file, use_color));
-
-            // Print each key-value pair under the file.
-            for (j, key) in keys.iter().enumerate() {
-                let is_last_key = j + 1 == keys.len();
-                let key_branch = if is_last_key {
-                    "└── "
-                } else {
-                    "├── "
-                };
-                let key_display = colorize(&key.key, colors.key, use_color);
-                let value_display = colorize(&key.value, colors.value, use_color);
-
-                // Pipe in service color (continuation below service), branch in file color.
-                print!("{}", colorize(pipe, colors.service_root, use_color));
-                print!("{}", colorize(key_branch, colors.file, use_color));
-                println!("{} = {}", key_display, value_display);
+    let services: Vec<TreeService> = grouped
+        .into_iter()
+        .map(|(service_name, files)| {
+            let file_count = files.len();
+            let tree_files: Vec<TreeFile> = files
+                .into_iter()
+                .map(|(file_name, keys)| {
+                    let items: Vec<TreeItem> = keys
+                        .iter()
+                        .map(|k| TreeItem {
+                            label: format!("{} = {}", k.key, k.value),
+                            color: AnsiColor::Green,
+                        })
+                        .collect();
+                    TreeFile {
+                        name: file_name,
+                        count: items.len(),
+                        items,
+                    }
+                })
+                .collect();
+            TreeService {
+                name: service_name,
+                count: file_count,
+                files: tree_files,
             }
-        }
-    }
+        })
+        .collect();
+
+    let mut out = Output::Stdout;
+    display::render_tree(&services, colors, use_color, &mut out);
 }
 
 #[cfg(test)]

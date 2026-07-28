@@ -25,6 +25,7 @@ use glob::Pattern;
 use super::{Cli, context};
 use crate::color;
 use crate::config;
+use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::edit::{ChangeSet, FileChange};
 use crate::model::{EnvFile, FileKind, Service};
 use crate::parser;
@@ -220,10 +221,12 @@ fn is_probably_text(path: &Path) -> bool {
             "jenkinsfile",
             "brewfile",
         ];
-        if SPECIAL_TEXT
-            .iter()
-            .any(|&s| lower == s || lower.starts_with(&(s.to_owned() + ".")))
-        {
+        if SPECIAL_TEXT.iter().any(|&s| {
+            lower == s
+                || (lower.starts_with(s)
+                    && lower.len() > s.len()
+                    && lower.as_bytes()[s.len()] == b'.')
+        }) {
             return true;
         }
     }
@@ -367,24 +370,6 @@ fn search_dir(dir: &Path, remaining: &mut HashSet<usize>, depth: usize, ctx: &Se
     }
 }
 
-/// Find a target file by service name and file path.
-fn find_target<'a>(
-    services: &'a [Service],
-    service_name: &str,
-    file_path: &str,
-) -> Result<&'a EnvFile> {
-    let service = services
-        .iter()
-        .find(|s| s.name == service_name)
-        .ok_or_else(|| anyhow::anyhow!("service '{service_name}' not found"))?;
-
-    service
-        .files
-        .iter()
-        .find(|f| f.display == file_path)
-        .ok_or_else(|| anyhow::anyhow!("file '{file_path}' not found in service '{service_name}'"))
-}
-
 /// Build a ChangeSet that removes unused keys from their files.
 fn build_clean_changes(unused_keys: &[KeyLocation], services: &[Service]) -> Result<ChangeSet> {
     let mut by_file: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
@@ -397,7 +382,7 @@ fn build_clean_changes(unused_keys: &[KeyLocation], services: &[Service]) -> Res
 
     let mut changes = Vec::new();
     for ((service_name, file_path), keys) in by_file {
-        let target_file = find_target(services, &service_name, &file_path)?;
+        let target_file = crate::model::find_target(services, &service_name, &file_path)?;
         let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
 
         let mut new_content = old_content.clone();
@@ -556,19 +541,11 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
         let changes = build_clean_changes(&unused_keys, &ctx.services)?;
 
         let use_color = color::should_use_color();
-        let colors = ctx
-            .config
-            .as_ref()
-            .map(|c| c.colors.clone())
-            .unwrap_or_default();
+        let colors = ctx.colors();
         context::preview_and_apply(cli, &changes, &colors, use_color)
     } else {
         let use_color = color::should_use_color();
-        let colors = ctx
-            .config
-            .as_ref()
-            .map(|c| c.colors.clone())
-            .unwrap_or_default();
+        let colors = ctx.colors();
         print_unused_keys(&unused_keys, &colors, use_color);
         Ok(())
     }
@@ -587,53 +564,38 @@ fn print_unused_keys(keys: &[KeyLocation], colors: &crate::color::ColorConfig, u
     }
 
     let mut total = 0;
-    for (service, files) in &by_service {
-        let service_count: usize = files.values().map(|k| k.len()).sum();
-        total += service_count;
-
-        eprintln!(
-            "{} {}",
-            color::colorize(&format!("{}/", service), colors.service_root, use_color),
-            color::colorize(
-                &format!("({})", service_count),
-                colors.service_root,
-                use_color
-            )
-        );
-
-        let file_count = files.len();
-        for (i, (file, file_keys)) in files.iter().enumerate() {
-            let is_last_file = i + 1 == file_count;
-            let branch = if is_last_file {
-                "└── "
-            } else {
-                "├── "
-            };
-            let pipe = if is_last_file { "    " } else { "│   " };
-
-            eprintln!(
-                "{}{} {}",
-                color::colorize(branch, colors.service_root, use_color),
-                color::colorize(file, colors.file, use_color),
-                color::colorize(&format!("({})", file_keys.len()), colors.file, use_color)
-            );
-
-            for (j, key) in file_keys.iter().enumerate() {
-                let is_last_key = j + 1 == file_keys.len();
-                let key_branch = if is_last_key {
-                    "└── "
-                } else {
-                    "├── "
-                };
-                eprintln!(
-                    "{}{}{}",
-                    color::colorize(pipe, colors.service_root, use_color),
-                    color::colorize(key_branch, colors.file, use_color),
-                    color::colorize(key, colors.key, use_color)
-                );
+    let services: Vec<TreeService> = by_service
+        .into_iter()
+        .map(|(service_name, files)| {
+            let service_count: usize = files.values().map(|k| k.len()).sum();
+            total += service_count;
+            let tree_files: Vec<TreeFile> = files
+                .into_iter()
+                .map(|(file_name, file_keys)| {
+                    let items: Vec<TreeItem> = file_keys
+                        .iter()
+                        .map(|k| TreeItem {
+                            label: (*k).to_string(),
+                            color: colors.key,
+                        })
+                        .collect();
+                    TreeFile {
+                        name: file_name,
+                        count: items.len(),
+                        items,
+                    }
+                })
+                .collect();
+            TreeService {
+                name: service_name,
+                count: service_count,
+                files: tree_files,
             }
-        }
-    }
+        })
+        .collect();
+
+    let mut out = Output::Stderr;
+    display::render_tree(&services, colors, use_color, &mut out);
 
     eprintln!(
         "\n{}",

@@ -9,6 +9,7 @@ mod cli; // command-line parsing, the wizard, and command handlers
 mod color; // ANSI color support and color configuration
 mod config; // reading/writing the `nv.yml` config file
 mod discovery; // finding services and their env files on disk
+mod display; // shared hierarchical tree rendering
 mod edit; // building, previewing (diffing), and applying file changes
 mod model; // shared data types used everywhere
 mod parser; // reading/editing .env and YAML files without losing formatting

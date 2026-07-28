@@ -12,7 +12,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use super::Cli;
 use crate::color::ColorConfig;
-use crate::config::{self, Config};
+use crate::config::{self, CONFIG_FILE, Config};
 use crate::discovery;
 use crate::model::{ConfigSource, FileKind, Service};
 
@@ -45,6 +45,11 @@ impl Context {
             return Ok(Vec::new());
         }
         cli.files.iter().map(|f| parse_kind(f)).collect()
+    }
+
+    /// Return the color configuration (cheap copy of 7 small enums).
+    pub fn colors(&self) -> ColorConfig {
+        self.config.as_ref().map(|c| c.colors).unwrap_or_default()
     }
 }
 
@@ -161,6 +166,35 @@ pub fn parse_kind(label: &str) -> Result<FileKind> {
             "unknown file kind '{other}' (expected: dotenv, dotenv_example, configmap, secret)"
         ),
     }
+}
+
+/// Mark one or more keys as false alarms in nv.yml.
+///
+/// `pairs` is a slice of `(service_name, key_name)` tuples to mark.
+pub fn mark_false_alarm(pairs: &[(&str, &str)]) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let config_path = config::find_config(&cwd).unwrap_or_else(|| cwd.join(CONFIG_FILE));
+
+    let mut cfg = if config_path.exists() {
+        config::load(&config_path)?
+    } else {
+        bail!("no nv.yml found; create one first with `nv init`");
+    };
+
+    let mut added = 0usize;
+    for (service, key) in pairs {
+        if cfg.add_false_alarm(service, key) {
+            added += 1;
+        }
+    }
+
+    config::save(&config_path, &cfg)?;
+    eprintln!(
+        "Marked {added} key(s) as false alarm(s) in {}.",
+        config_path.display()
+    );
+
+    Ok(())
 }
 
 /// A shared progress tracker for commands that scan files.

@@ -12,6 +12,8 @@
 //! the raw lines, using indentation to understand nesting, and rewrite only the
 //! one line that holds the target value.
 
+use std::borrow::Cow;
+
 use super::ParsedPair;
 
 /// Names of the top-level blocks that hold env keys in k8s manifests.
@@ -38,7 +40,7 @@ fn mapping_of(line: &str) -> Option<(usize, String, String)> {
         return None;
     }
     let value = strip_inline_comment(content[colon + 1..].trim());
-    Some((indent, key.to_string(), unquote(value)))
+    Some((indent, key.to_string(), unquote(value).into_owned()))
 }
 
 /// Find the index of the colon that separates a mapping key from its value,
@@ -88,15 +90,15 @@ fn strip_inline_comment(value: &str) -> &str {
 }
 
 /// Strip a single layer of matching quotes from a scalar.
-fn unquote(value: &str) -> String {
+fn unquote(value: &str) -> Cow<'_, str> {
     let b = value.as_bytes();
     if b.len() >= 2 {
         let (f, l) = (b[0], b[b.len() - 1]);
         if (f == b'"' && l == b'"') || (f == b'\'' && l == b'\'') {
-            return value[1..value.len() - 1].to_string();
+            return Cow::Owned(value[1..value.len() - 1].to_string());
         }
     }
-    value.to_string()
+    Cow::Borrowed(value)
 }
 
 /// Format a Rust string as a YAML scalar, quoting only when necessary.
@@ -205,11 +207,7 @@ fn collect_block_children(lines: &[String], block_line: usize) -> Vec<ParsedPair
 /// Set `key` to `value`, editing in place or creating it, preserving all other
 /// formatting.
 pub fn set_value(content: &str, key: &str, value: &str) -> String {
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = crate::parser::detect_newline(content);
     let ends_with_newline = content.ends_with('\n') || content.is_empty();
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
@@ -231,11 +229,7 @@ pub fn set_value(content: &str, key: &str, value: &str) -> String {
 /// Works for both flat and Kubernetes-style YAML. If the key is not present,
 /// the content is returned unchanged.
 pub fn remove_key(content: &str, key: &str) -> String {
-    let newline = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = crate::parser::detect_newline(content);
     let ends_with_newline = content.ends_with('\n') || content.is_empty();
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 

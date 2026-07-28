@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use similar::{ChangeTag, TextDiff};
 
-use crate::color::{ColorConfig, colorize};
+use crate::color::{AnsiColor, ColorConfig};
+use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::{EnvFile, FileKind, Service};
 use crate::parser;
 
@@ -147,8 +148,6 @@ impl ChangeSet {
     ///     └── - OLD_LINE
     /// ```
     pub fn render_diff(&self, colors: &ColorConfig, use_color: bool) -> String {
-        let mut out = String::new();
-
         // Group changes by service name.
         let mut by_service: BTreeMap<String, Vec<&FileChange>> = BTreeMap::new();
         for change in self.effective() {
@@ -158,99 +157,70 @@ impl ChangeSet {
                 .push(change);
         }
 
-        // Count total diff lines for the footer.
         let mut total_diffs = 0usize;
 
-        for (service, changes) in &by_service {
-            // Count diff lines in this service.
-            let service_count: usize = changes
-                .iter()
-                .map(|c| {
-                    let diff = TextDiff::from_lines(&c.old_content, &c.new_content);
-                    diff.iter_all_changes()
-                        .filter(|op| op.tag() != ChangeTag::Equal)
-                        .count()
-                })
-                .sum();
-            total_diffs += service_count;
+        let services: Vec<TreeService> = by_service
+            .into_iter()
+            .map(|(service_name, changes)| {
+                let tree_files: Vec<TreeFile> = changes
+                    .iter()
+                    .map(|change| {
+                        let diff = TextDiff::from_lines(&change.old_content, &change.new_content);
+                        let diff_lines: Vec<(AnsiColor, String)> = diff
+                            .iter_all_changes()
+                            .filter_map(|op| match op.tag() {
+                                ChangeTag::Equal => None,
+                                ChangeTag::Delete => Some((
+                                    colors.removed,
+                                    format!("- {}", op.value().trim_end_matches('\n')),
+                                )),
+                                ChangeTag::Insert => Some((
+                                    colors.added,
+                                    format!("+ {}", op.value().trim_end_matches('\n')),
+                                )),
+                            })
+                            .collect();
 
-            // Service root heading with count.
-            out.push_str(&format!(
-                "{} {}\n",
-                colorize(&format!("{}/", service), colors.service_root, use_color),
-                colorize(
-                    &format!("({})", service_count),
-                    colors.service_root,
-                    use_color
-                )
-            ));
+                        total_diffs += diff_lines.len();
 
-            let file_count = changes.len();
-            for (i, change) in changes.iter().enumerate() {
-                let is_last_file = i + 1 == file_count;
-                let branch = if is_last_file {
-                    "└── "
-                } else {
-                    "├── "
-                };
-                let pipe = if is_last_file { "    " } else { "│   " };
+                        let items: Vec<TreeItem> = diff_lines
+                            .into_iter()
+                            .map(|(color, label)| TreeItem { label, color })
+                            .collect();
 
-                // Count diff lines in this file.
-                let diff = TextDiff::from_lines(&change.old_content, &change.new_content);
-                let diff_lines: Vec<_> = diff
-                    .iter_all_changes()
-                    .filter_map(|op| match op.tag() {
-                        ChangeTag::Equal => None,
-                        ChangeTag::Delete => {
-                            Some(("-", colors.removed, op.value().trim_end_matches('\n')))
-                        }
-                        ChangeTag::Insert => {
-                            Some(("+", colors.added, op.value().trim_end_matches('\n')))
+                        TreeFile {
+                            name: change.display.clone(),
+                            count: items.len(),
+                            items,
                         }
                     })
                     .collect();
 
-                // File-level branch and pipe in service color (parent node).
-                out.push_str(&colorize(branch, colors.service_root, use_color).to_string());
-                out.push_str(&colorize(&change.display, colors.file, use_color).to_string());
-                out.push_str(&format!(
-                    " {}\n",
-                    colorize(&format!("({})", diff_lines.len()), colors.file, use_color)
-                ));
-
-                // Render diff lines for this file.
-                for (j, (sign, line_color, line)) in diff_lines.iter().enumerate() {
-                    let is_last_line = j + 1 == diff_lines.len();
-                    let key_branch = if is_last_line {
-                        "└── "
-                    } else {
-                        "├── "
-                    };
-                    // Pipe in service color (continuation below service), branch in file color.
-                    out.push_str(&colorize(pipe, colors.service_root, use_color).to_string());
-                    out.push_str(&colorize(key_branch, colors.file, use_color).to_string());
-                    out.push_str(&format!(
-                        "{} {}\n",
-                        colorize(sign, *line_color, use_color),
-                        colorize(line, *line_color, use_color)
-                    ));
+                let service_count: usize = tree_files.iter().map(|f| f.count).sum();
+                TreeService {
+                    name: service_name,
+                    count: service_count,
+                    files: tree_files,
                 }
-            }
-        }
+            })
+            .collect();
+
+        let mut out = Output::String(String::new());
+        display::render_tree(&services, colors, use_color, &mut out);
 
         if total_diffs > 0 {
-            out.push('\n');
-            out.push_str(&format!(
-                "{}\n",
-                colorize(
-                    &format!("{} potential change(s) found.", total_diffs),
-                    colors.service_root,
-                    use_color
-                )
-            ));
+            display::render_summary(
+                &format!("{} potential change(s) found.", total_diffs),
+                colors,
+                use_color,
+                &mut out,
+            );
         }
 
-        out
+        match out {
+            Output::String(s) => s,
+            _ => unreachable!(),
+        }
     }
 
     /// Write all effective changes to disk, creating files and parent dirs as

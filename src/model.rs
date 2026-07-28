@@ -7,6 +7,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use anyhow::Result;
+
 /// The four kinds of env-bearing files `nv` understands.
 ///
 /// An `enum` is a type that is exactly one of a fixed set of variants. The
@@ -120,6 +122,27 @@ impl ConfigSource {
             ConfigSource::CommandLine => "Config source: command-line",
         }
     }
+}
+
+/// Find an [`EnvFile`] by service name and display path.
+///
+/// This is used by multiple commands (encrypt, decrypt, unused) to resolve
+/// a `(service, file)` CLI pair into the concrete file on disk.
+pub fn find_target<'a>(
+    services: &'a [Service],
+    service_name: &str,
+    file_path: &str,
+) -> Result<&'a EnvFile> {
+    let service = services
+        .iter()
+        .find(|s| s.name == service_name)
+        .ok_or_else(|| anyhow::anyhow!("service '{service_name}' not found"))?;
+
+    service
+        .files
+        .iter()
+        .find(|f| f.display == file_path)
+        .ok_or_else(|| anyhow::anyhow!("file '{file_path}' not found in service '{service_name}'"))
 }
 
 impl fmt::Display for ConfigSource {

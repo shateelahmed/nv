@@ -267,8 +267,13 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
                 line.to_string()
             }
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .fold(String::new(), |mut acc, s| {
+            if !acc.is_empty() {
+                acc.push('\n');
+            }
+            acc.push_str(&s);
+            acc
+        });
     text.push('\n');
     std::fs::write(path, text).with_context(|| format!("writing config {}", path.display()))?;
     Ok(())

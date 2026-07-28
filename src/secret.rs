@@ -21,6 +21,8 @@ pub struct SecretSpec {
     /// Optional custom charset; when set, overrides `format` and produces a
     /// string of `length` characters drawn from it.
     pub charset: Option<String>,
+    /// Cached `Vec<char>` of the charset, built once at construction time.
+    pub chars: Vec<char>,
 }
 
 impl Default for SecretSpec {
@@ -29,16 +31,23 @@ impl Default for SecretSpec {
             length: 32,
             format: SecretFormat::Base64,
             charset: None,
+            chars: Vec::new(),
         }
     }
 }
 
 impl From<&SecretPreset> for SecretSpec {
     fn from(p: &SecretPreset) -> Self {
+        let chars = p
+            .charset
+            .as_deref()
+            .map(|c| c.chars().collect())
+            .unwrap_or_default();
         SecretSpec {
             length: p.length,
             format: p.format,
             charset: p.charset.clone(),
+            chars,
         }
     }
 }
@@ -53,10 +62,10 @@ pub fn generate(spec: &SecretSpec) -> Result<String> {
 
     // A custom charset takes priority: pick `length` random characters from it.
     if let Some(charset) = &spec.charset {
-        let chars: Vec<char> = charset.chars().collect();
-        if chars.is_empty() {
+        if charset.is_empty() {
             bail!("custom charset must not be empty");
         }
+        let chars = &spec.chars;
         return Ok((0..spec.length)
             .map(|_| chars[rng.random_range(0..chars.len())])
             .collect());
@@ -114,6 +123,7 @@ mod tests {
             length: 40,
             format: SecretFormat::Alnum,
             charset: None,
+            chars: Vec::new(),
         };
         let s = generate(&spec).unwrap();
         assert_eq!(s.chars().count(), 40);
@@ -126,6 +136,7 @@ mod tests {
             length: 16,
             format: SecretFormat::Hex,
             charset: None,
+            chars: Vec::new(),
         };
         let s = generate(&spec).unwrap();
         assert_eq!(s.len(), 32); // 2 hex chars per byte
@@ -138,6 +149,7 @@ mod tests {
             length: 50,
             format: SecretFormat::Base64,
             charset: Some("AB".to_string()),
+            chars: vec!['A', 'B'],
         };
         let s = generate(&spec).unwrap();
         assert_eq!(s.len(), 50);
@@ -150,6 +162,7 @@ mod tests {
             length: 32,
             format: SecretFormat::Base64,
             charset: None,
+            chars: Vec::new(),
         };
         let secrets = generate_unique(&spec, 5).unwrap();
         assert_eq!(secrets.len(), 5);
@@ -166,6 +179,7 @@ mod tests {
             length: 0,
             format: SecretFormat::Hex,
             charset: None,
+            chars: Vec::new(),
         };
         assert!(generate(&spec).is_err());
     }

@@ -8,8 +8,8 @@ use anyhow::{Result, bail};
 use regex::Regex;
 
 use super::{Cli, context};
-use crate::color::{self, ColorConfig, colorize};
-use crate::config::{self, CONFIG_FILE};
+use crate::color::{self, ColorConfig};
+use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::FileKind;
 use crate::parser;
 
@@ -183,7 +183,11 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
         if matching.is_empty() {
             bail!("no fake secret found with key '{fa_key}'");
         }
-        return mark_false_alarm(cli, &ctx, &matching);
+        let pairs: Vec<(&str, &str)> = matching
+            .iter()
+            .map(|f| (f.service.as_str(), f.key.as_str()))
+            .collect();
+        return context::mark_false_alarm(&pairs);
     }
 
     if fake_secrets.is_empty() {
@@ -192,11 +196,7 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
     }
 
     let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
+    let colors = ctx.colors();
 
     print_fake_secrets(&fake_secrets, &colors, use_color);
 
@@ -205,10 +205,6 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
 
 /// Print fake secrets grouped by service, then by file, with tree-style
 /// vertical lines.
-///
-/// Each file is shown with its full path relative to the service root.
-/// Tree lines are colored to match the text they lead to.
-/// Counts are shown next to service names and file names.
 fn print_fake_secrets(fake_secrets: &[FakeSecret], colors: &ColorConfig, use_color: bool) {
     let mut grouped: FakeSecretMap = BTreeMap::new();
 
@@ -221,92 +217,45 @@ fn print_fake_secrets(fake_secrets: &[FakeSecret], colors: &ColorConfig, use_col
             .push((&fs.key, &fs.value));
     }
 
-    for (service, files) in &grouped {
-        // Count fake secrets in this service.
-        let service_count: usize = files.values().map(|k| k.len()).sum();
-        println!(
-            "{} {}",
-            colorize(&format!("{}/", service), colors.service_root, use_color),
-            colorize(
-                &format!("({})", service_count),
-                colors.service_root,
-                use_color
-            )
-        );
-
-        let file_count = files.len();
-        for (i, (file_display, keys)) in files.iter().enumerate() {
-            let is_last_file = i + 1 == file_count;
-            let branch = if is_last_file {
-                "└── "
-            } else {
-                "├── "
-            };
-            let pipe = if is_last_file { "    " } else { "│   " };
-
-            // File-level branch and pipe in service color (parent node).
-            print!("{}", colorize(branch, colors.service_root, use_color));
-            println!(
-                "{} {}",
-                colorize(file_display, colors.file, use_color),
-                colorize(&format!("({})", keys.len()), colors.file, use_color)
-            );
-
-            for (j, (key, value)) in keys.iter().enumerate() {
-                let is_last_key = j + 1 == keys.len();
-                let key_branch = if is_last_key {
-                    "└── "
-                } else {
-                    "├── "
-                };
-                let key_display = colorize(key, colors.key, use_color);
-                let value_display = colorize(value, colors.value, use_color);
-
-                // Pipe in service color (continuation below service), branch in file color.
-                print!("{}", colorize(pipe, colors.service_root, use_color));
-                print!("{}", colorize(key_branch, colors.file, use_color));
-                println!("{} = {}", key_display, value_display);
+    let services: Vec<TreeService> = grouped
+        .into_iter()
+        .map(|(service_name, files)| {
+            let service_count: usize = files.values().map(|k| k.len()).sum();
+            let tree_files: Vec<TreeFile> = files
+                .into_iter()
+                .map(|(file_name, keys)| {
+                    let items: Vec<TreeItem> = keys
+                        .iter()
+                        .map(|(k, v)| TreeItem {
+                            label: format!("{} = {}", k, v),
+                            color: colors.key,
+                        })
+                        .collect();
+                    TreeFile {
+                        name: file_name.to_string(),
+                        count: items.len(),
+                        items,
+                    }
+                })
+                .collect();
+            TreeService {
+                name: service_name.to_string(),
+                count: service_count,
+                files: tree_files,
             }
-        }
-    }
+        })
+        .collect();
+
+    let mut out = Output::Stdout;
+    display::render_tree(&services, colors, use_color, &mut out);
 
     eprintln!("\n{} fake secret(s) found.", fake_secrets.len());
-}
-
-/// Mark one or more keys as false alarms in nv.yml.
-fn mark_false_alarm(
-    _cli: &Cli,
-    _ctx: &context::Context,
-    fake_secrets: &[&FakeSecret],
-) -> Result<()> {
-    let config_path = config::find_config(&std::env::current_dir()?)
-        .unwrap_or_else(|| std::env::current_dir().unwrap().join(CONFIG_FILE));
-
-    let mut cfg = if config_path.exists() {
-        config::load(&config_path)?
-    } else {
-        bail!("no nv.yml found; create one first with `nv init`");
-    };
-
-    let mut added = 0usize;
-    for fs in fake_secrets {
-        if cfg.add_false_alarm(&fs.service, &fs.key) {
-            added += 1;
-        }
-    }
-
-    config::save(&config_path, &cfg)?;
-    eprintln!(
-        "Marked {added} key(s) as false alarm(s) in {}.",
-        config_path.display()
-    );
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config;
 
     #[test]
     fn placeholder_xxx() {

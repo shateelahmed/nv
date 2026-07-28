@@ -91,86 +91,49 @@ fn decrypt_content(value: &str, password: &str) -> Result<String> {
         .map_err(|e| anyhow::anyhow!("decrypted content is not valid UTF-8: {e}"))
 }
 
-/// Find a service by name and a file by relative path within it.
-fn find_target<'a>(
-    services: &'a [crate::model::Service],
+/// Shared runner for encrypt/decrypt — resolves the target file, reads it,
+/// calls `transform_fn`, and shows a preview.
+fn run_transform(
+    cli: &Cli,
+    password: &str,
     service_name: &str,
     file_path: &str,
-) -> Result<&'a crate::model::EnvFile> {
-    let service = services
-        .iter()
-        .find(|s| s.name == service_name)
-        .ok_or_else(|| anyhow::anyhow!("service '{service_name}' not found"))?;
+    transform_fn: fn(&str, &str) -> Result<String>,
+) -> Result<()> {
+    let ctx = super::context::resolve(cli)?;
+    super::context::print_banner(ctx.source);
 
-    service
-        .files
-        .iter()
-        .find(|f| f.display == file_path)
-        .ok_or_else(|| anyhow::anyhow!("file '{file_path}' not found in service '{service_name}'"))
+    let target_file = crate::model::find_target(&ctx.services, service_name, file_path)?;
+    let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
+
+    let new_content = transform_fn(&old_content, password)?;
+
+    let changes = ChangeSet {
+        changes: vec![crate::edit::FileChange {
+            service: service_name.to_string(),
+            display: target_file.display.clone(),
+            path: target_file.path.clone(),
+            kind: target_file.kind,
+            key: String::new(),
+            value: String::new(),
+            old_content,
+            new_content,
+        }],
+    };
+
+    let use_color = color::should_use_color();
+    let colors = ctx.colors();
+    super::context::preview_and_apply(cli, &changes, &colors, use_color)
 }
 
 /// Handle `nv encrypt`: encrypt an entire file.
 pub fn run_encrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
-    let ctx = super::context::resolve(cli)?;
-    super::context::print_banner(ctx.source);
-
-    let target_file = find_target(&ctx.services, service_name, file_path)?;
-    let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
-
-    let new_content = encrypt_content(&old_content, password)?;
-
-    let changes = ChangeSet {
-        changes: vec![crate::edit::FileChange {
-            service: service_name.to_string(),
-            display: target_file.display.clone(),
-            path: target_file.path.clone(),
-            kind: target_file.kind,
-            key: String::new(),
-            value: String::new(),
-            old_content,
-            new_content,
-        }],
-    };
-
-    let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
-    super::context::preview_and_apply(cli, &changes, &colors, use_color)
+    run_transform(cli, password, service_name, file_path, encrypt_content)
 }
 
 /// Handle `nv decrypt`: decrypt an entire file.
 pub fn run_decrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
-    let ctx = super::context::resolve(cli)?;
-    super::context::print_banner(ctx.source);
-
-    let target_file = find_target(&ctx.services, service_name, file_path)?;
-    let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
-
-    let new_content = decrypt_content(&old_content, password)?;
-
-    let changes = ChangeSet {
-        changes: vec![crate::edit::FileChange {
-            service: service_name.to_string(),
-            display: target_file.display.clone(),
-            path: target_file.path.clone(),
-            kind: target_file.kind,
-            key: String::new(),
-            value: String::new(),
-            old_content,
-            new_content,
-        }],
-    };
-
-    let use_color = color::should_use_color();
-    let colors = ctx
-        .config
-        .as_ref()
-        .map(|c| c.colors.clone())
-        .unwrap_or_default();
-    super::context::preview_and_apply(cli, &changes, &colors, use_color)
+    run_transform(cli, password, service_name, file_path, decrypt_content)
 }
 
 #[cfg(test)]

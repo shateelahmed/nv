@@ -67,7 +67,7 @@ impl fmt::Display for AnsiColor {
 ///
 /// Each field controls the color of a specific part of the hierarchical output.
 /// All colors can be customized in `nv.yml` under the `colors:` section.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColorConfig {
     /// Color for microservice root folder names.
     #[serde(default = "default_service_root")]

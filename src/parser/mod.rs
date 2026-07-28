@@ -100,6 +100,18 @@ pub fn remove_key(content: &str, kind: FileKind, key: &str) -> String {
     }
 }
 
+/// Detect the line ending style of a text file.
+///
+/// Returns `"\r\n"` if the content contains CRLF, `"\n"` otherwise.
+/// This avoids duplicating the `contains("\r\n")` check across sub-parsers.
+pub fn detect_newline(content: &str) -> &str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
