@@ -105,6 +105,12 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
 
         progress.inc_dirs();
 
+        let special_secret_keys: Vec<&str> = ctx
+            .config
+            .as_ref()
+            .map(|cfg| cfg.special_secret_keys_for(&service.name))
+            .unwrap_or_default();
+
         for file in &service.files {
             if !target_kinds.contains(&file.kind) {
                 continue;
@@ -144,13 +150,18 @@ pub fn run(cli: &Cli, false_alarm: &Option<String>) -> Result<()> {
                 let key = pair.key;
                 let value = pair.value;
 
+                // A key is considered a secret key if it matches the built-in
+                // secret naming pattern OR is listed in special_secret_keys.
+                let is_secret_key =
+                    secret_re.is_match(&key) || special_secret_keys.contains(&key.as_str());
+
                 let detected = match file.kind {
                     // Category 1: Placeholder values in configmaps, but only for
                     // keys that would NOT be caught by `nv leaks` (i.e., keys
                     // that don't match the secret key naming pattern).
-                    FileKind::ConfigMap => !secret_re.is_match(&key) && is_placeholder(&value),
+                    FileKind::ConfigMap => !is_secret_key && is_placeholder(&value),
                     // Category 2: Non-secret keys in secrets files.
-                    FileKind::Secret => !secret_re.is_match(&key),
+                    FileKind::Secret => !is_secret_key,
                     _ => false,
                 };
 

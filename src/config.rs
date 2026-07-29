@@ -41,6 +41,11 @@ pub struct LeakConfig {
     /// on future runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub false_alarms: Vec<String>,
+    /// Additional key names to detect as leaks (for `nv leaks`) / skip as
+    /// fake secrets (for `nv fake-secrets`), beyond the built-in regex
+    /// pattern. Configured globally and/or per-service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub special_secret_keys: Vec<String>,
 }
 
 /// An explicitly configured service entry.
@@ -206,6 +211,45 @@ impl Config {
             .unwrap_or(false)
     }
 
+    /// Return the merged list of special secret keys for a service — global
+    /// list plus per-service list, deduplicated.
+    pub fn special_secret_keys_for(&self, service: &str) -> Vec<&str> {
+        let global: Vec<&str> = self
+            .commands
+            .as_ref()
+            .and_then(|cmd| cmd.leaks.as_ref())
+            .map(|leaks| {
+                leaks
+                    .special_secret_keys
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let per_svc: Vec<&str> = self
+            .services
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.leaks.as_ref())
+            .map(|leaks| {
+                leaks
+                    .special_secret_keys
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut merged: Vec<&str> = global;
+        for key in per_svc {
+            if !merged.contains(&key) {
+                merged.push(key);
+            }
+        }
+        merged
+    }
+
     /// Mark a key in a specific service as a false alarm, creating entries as
     /// needed. Returns `true` if the key was newly added.
     pub fn add_false_alarm(&mut self, service: &str, key: &str) -> bool {
@@ -338,6 +382,72 @@ services:
             serialized.contains("billing:\n    path: pay"),
             "service with path should keep it"
         );
+    }
+
+    #[test]
+    fn global_special_secret_keys() {
+        let yaml = r#"
+services_root: .
+commands:
+  leaks:
+    special_secret_keys:
+      - MYAPP_CREDENTIALS
+      - SOME_SALT
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let keys = config.special_secret_keys_for("any-service");
+        assert_eq!(keys, vec!["MYAPP_CREDENTIALS", "SOME_SALT"]);
+    }
+
+    #[test]
+    fn per_service_special_secret_keys() {
+        let yaml = r#"
+services_root: .
+services:
+  auth:
+    commands:
+      leaks:
+        special_secret_keys:
+          - CUSTOM_AUTH_SECRET
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.special_secret_keys_for("auth"),
+            vec!["CUSTOM_AUTH_SECRET"]
+        );
+        // Other services get nothing.
+        let other_keys: Vec<&str> = config.special_secret_keys_for("other");
+        assert!(other_keys.is_empty());
+    }
+
+    #[test]
+    fn global_and_per_service_special_secret_keys_merge() {
+        let yaml = r#"
+services_root: .
+commands:
+  leaks:
+    special_secret_keys:
+      - GLOBAL_KEY
+services:
+  auth:
+    commands:
+      leaks:
+        special_secret_keys:
+          - LOCAL_KEY
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let keys = config.special_secret_keys_for("auth");
+        assert_eq!(keys, vec!["GLOBAL_KEY", "LOCAL_KEY"]);
+    }
+
+    #[test]
+    fn special_secret_keys_empty_when_not_configured() {
+        let yaml = r#"
+services_root: .
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let keys: Vec<&str> = config.special_secret_keys_for("any");
+        assert!(keys.is_empty());
     }
 
     #[test]

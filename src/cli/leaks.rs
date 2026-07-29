@@ -32,6 +32,22 @@ fn leak_pattern() -> Regex {
     .expect("hardcoded regex is valid")
 }
 
+/// Build a regex that matches any of the given special secret keys.
+///
+/// Uses the same value-extraction capture groups as [`leak_pattern`] so that
+/// the two passes can share the same post-processing logic:
+///   - Group 1: the key name
+///   - Group 2: YAML-colon value (optional)
+///   - Group 3: dotenv value (optional)
+fn special_secret_key_pattern(keys: &[&str]) -> Regex {
+    let escaped: Vec<String> = keys.iter().map(|k| regex::escape(k)).collect();
+    let pattern = format!(
+        r"(?m)^\s*(?:export\s+)?({})[^\S\n]*(?::\s*(.+)|=[^\S\n]*(\S.*))$",
+        escaped.join("|")
+    );
+    Regex::new(&pattern).expect("special key regex is valid")
+}
+
 /// A single detected potential leak.
 struct Leak {
     service: String,
@@ -73,6 +89,17 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
 
         progress.inc_dirs();
 
+        // Build a special-secret-keys regex if any are configured for this
+        // service (global + per-service merged).
+        let special_pattern: Option<Regex> = ctx.config.as_ref().and_then(|cfg| {
+            let keys = cfg.special_secret_keys_for(&service.name);
+            if keys.is_empty() {
+                None
+            } else {
+                Some(special_secret_key_pattern(&keys))
+            }
+        });
+
         for file in &service.files {
             if !target_kinds.contains(&file.kind) {
                 continue;
@@ -85,6 +112,13 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
                 Ok(c) => c,
                 Err(_) => continue,
             };
+
+            // Collect matches deduplicated by key name. Both the built-in
+            // regex and the special-secret-keys regex may match a key; a key
+            // should only be reported once.
+            let mut file_leaks: BTreeMap<String, String> = BTreeMap::new();
+
+            // Pass 1: built-in regex pattern.
             for cap in pattern.captures_iter(&content) {
                 let key = cap[1].to_string();
                 let value = cap
@@ -92,8 +126,25 @@ pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
                     .or_else(|| cap.get(2))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
+                file_leaks.entry(key).or_insert(value);
+            }
 
-                // Skip keys marked as false alarms in nv.yml.
+            // Pass 2: special-secret-keys pattern (if configured).
+            if let Some(ref sp) = special_pattern {
+                for cap in sp.captures_iter(&content) {
+                    let key = cap[1].to_string();
+                    let value = cap
+                        .get(3)
+                        .or_else(|| cap.get(2))
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default();
+                    file_leaks.entry(key).or_insert(value);
+                }
+            }
+
+            // Push matched keys to the global leaks list, skipping false
+            // alarms.
+            for (key, value) in file_leaks {
                 if let Some(ref cfg) = ctx.config
                     && cfg.is_false_alarm(&service.name, &key)
                 {
@@ -321,5 +372,81 @@ mod tests {
         assert!(cfg.is_false_alarm("auth", "DB_PASSWORD"));
         // Adding again returns false (already present).
         assert!(!cfg.add_false_alarm("auth", "DB_PASSWORD"));
+    }
+
+    #[test]
+    fn special_secret_key_pattern_matches_dotenv() {
+        let re = special_secret_key_pattern(&["MYAPP_CREDENTIALS", "SOME_SALT"]);
+        let input = "MYAPP_CREDENTIALS=supersecret\nLOG_LEVEL=debug\nSOME_SALT=abc\n";
+        let keys: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        assert_eq!(keys, vec!["MYAPP_CREDENTIALS", "SOME_SALT"]);
+    }
+
+    #[test]
+    fn special_secret_key_pattern_matches_yaml() {
+        let re = special_secret_key_pattern(&["MYAPP_CREDENTIALS"]);
+        let input = "MYAPP_CREDENTIALS: supersecret\n";
+        let keys: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        assert_eq!(keys, vec!["MYAPP_CREDENTIALS"]);
+    }
+
+    #[test]
+    fn special_secret_key_pattern_respects_export_prefix() {
+        let re = special_secret_key_pattern(&["MYAPP_CREDENTIALS"]);
+        let input = "export MYAPP_CREDENTIALS=supersecret\n";
+        let keys: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        assert_eq!(keys, vec!["MYAPP_CREDENTIALS"]);
+    }
+
+    #[test]
+    fn special_secret_key_pattern_skips_empty_values() {
+        let re = special_secret_key_pattern(&["MYAPP_CREDENTIALS"]);
+        let input = "MYAPP_CREDENTIALS=\nOTHER_KEY=value\n";
+        let keys: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn special_secret_key_pattern_extracts_values() {
+        let re = special_secret_key_pattern(&["MYAPP_CREDENTIALS"]);
+        let input = "MYAPP_CREDENTIALS=supersecret\n";
+        let caps: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| {
+                let key = cap[1].to_string();
+                let value = cap
+                    .get(3)
+                    .or_else(|| cap.get(2))
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+                format!("{}={}", key, value)
+            })
+            .collect();
+        assert_eq!(caps, vec!["MYAPP_CREDENTIALS=supersecret"]);
+    }
+
+    #[test]
+    fn special_secret_key_does_not_interfere_with_regex_pattern() {
+        // A key that matches both regex and special_secret_keys should be
+        // found at least once (dedup is tested at the integration level).
+        let re = leak_pattern();
+        let input = "API_KEY=sk-test\n";
+        let keys: Vec<String> = re
+            .captures_iter(input)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        assert_eq!(keys, vec!["API_KEY"]);
     }
 }
