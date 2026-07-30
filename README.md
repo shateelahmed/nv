@@ -166,6 +166,7 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv` | Launch the interactive TUI. |
 | `nv init` | Create/update `nv.yml` via a wizard. |
 | `nv find <query>` | Fuzzy-find a key across all services. |
+| `nv compare <file-path>` | Compare a file against other files of the same kind. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
 | `nv gen <KEY>` | Generate a secret and set it on a key. |
 
@@ -201,6 +202,12 @@ nv set DATABASE_URL postgres://db:5432/app
 
 # Set a value only in the auth service's .env
 nv set LOG_LEVEL debug --service auth --file dotenv
+
+# Compare a .env.example against other .env files across services
+nv compare .env.example
+
+# Show value differences too
+nv compare .env.example --values
 
 # Preview a change without writing
 nv --dry-run set FEATURE_FLAG on

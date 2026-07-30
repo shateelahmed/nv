@@ -5,6 +5,7 @@
 //! parser and `--help` text from them automatically. Each `#[arg(...)]` /
 //! `#[command(...)]` attribute configures one flag or subcommand.
 
+mod compare;
 pub mod context;
 mod duplicates;
 mod encrypt;
@@ -184,6 +185,15 @@ pub enum Command {
         #[arg(short = 's', long = "service")]
         services: Vec<String>,
     },
+
+    /// Compare an env file against other files of the same kind.
+    Compare {
+        /// Path to the base file, relative to the services root.
+        file_path: String,
+        /// Also compare values for keys present in both files.
+        #[arg(long)]
+        values: bool,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -240,6 +250,7 @@ pub fn run() -> Result<()> {
         }
         Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
         Some(Command::Duplicates { services }) => duplicates::run(&cli, services),
+        Some(Command::Compare { file_path, values }) => compare::run(&cli, file_path, *values),
         None => crate::tui::launch(&cli),
     }
 }
