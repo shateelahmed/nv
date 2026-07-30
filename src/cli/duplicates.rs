@@ -170,7 +170,13 @@ fn print_duplicates(
                         .map(|d| {
                             let value = d.locations.first().map(|l| l.value.as_str()).unwrap_or("");
                             TreeItem {
-                                label: format!("{} = {}", d.key, value),
+                                label: color::colored_kv_label(
+                                    &d.key,
+                                    value,
+                                    colors.key,
+                                    colors.value,
+                                    use_color,
+                                ),
                                 color: colors.key,
                             }
                         })

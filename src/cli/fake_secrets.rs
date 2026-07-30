@@ -238,7 +238,13 @@ fn print_fake_secrets(fake_secrets: &[FakeSecret], colors: &ColorConfig, use_col
                     let items: Vec<TreeItem> = keys
                         .iter()
                         .map(|(k, v)| TreeItem {
-                            label: format!("{} = {}", k, v),
+                            label: color::colored_kv_label(
+                                k,
+                                v,
+                                colors.key,
+                                colors.value,
+                                use_color,
+                            ),
                             color: colors.key,
                         })
                         .collect();

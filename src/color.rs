@@ -192,6 +192,36 @@ pub fn colorize<'a>(text: &'a str, color: AnsiColor, enabled: bool) -> Colorizer
     Colorizer::new(text, color, enabled)
 }
 
+/// Build a `key = value` label with the key and value in different colors.
+///
+/// When `enabled` is true, the key is wrapped in `key_color` and the value in
+/// `value_color` using ANSI escape codes. The caller should set the
+/// [`TreeItem`](crate::display::TreeItem) color to `key_color` so that the
+/// tree renderer's outer colorize call harmonizes with the key portion.
+///
+/// When `enabled` is false, returns plain `"{key} = {value}"`.
+pub fn colored_kv_label(
+    key: &str,
+    value: &str,
+    key_color: AnsiColor,
+    value_color: AnsiColor,
+    enabled: bool,
+) -> String {
+    if enabled {
+        format!(
+            "{}{}{} = {}{}{}",
+            key_color.code(),
+            key,
+            AnsiColor::Reset.code(),
+            value_color.code(),
+            value,
+            AnsiColor::Reset.code(),
+        )
+    } else {
+        format!("{} = {}", key, value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

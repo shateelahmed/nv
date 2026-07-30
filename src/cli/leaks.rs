@@ -216,7 +216,13 @@ fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
                     let items: Vec<TreeItem> = keys
                         .iter()
                         .map(|(k, v)| TreeItem {
-                            label: format!("{} = {}", k, v),
+                            label: color::colored_kv_label(
+                                k,
+                                v,
+                                colors.key,
+                                colors.value,
+                                use_color,
+                            ),
                             color: colors.key,
                         })
                         .collect();

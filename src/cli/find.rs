@@ -85,8 +85,14 @@ fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_colo
                     let items: Vec<TreeItem> = keys
                         .iter()
                         .map(|k| TreeItem {
-                            label: format!("{} = {}", k.key, k.value),
-                            color: AnsiColor::Green,
+                            label: color::colored_kv_label(
+                                &k.key,
+                                &k.value,
+                                colors.key,
+                                colors.value,
+                                use_color,
+                            ),
+                            color: colors.key,
                         })
                         .collect();
                     TreeFile {
