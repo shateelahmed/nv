@@ -133,28 +133,41 @@
 - [x] **T14: Add `--comments` comment comparison**
   - File: `src/parser/mod.rs`, `src/parser/dotenv.rs`, `src/parser/yaml.rs`,
     `src/cli/mod.rs`, `src/cli/compare.rs`
-  - Add `parser::ParsedComment` and `parser::parse_comments(content, kind)`
-    with per-format extraction (dotenv, flat YAML, k8s YAML): a key's comment
-    is the consecutive `#` lines directly above it (blank or non-comment lines
-    break the block) plus the inline `# comment` on its own line. Shared
-    helpers `comment_text` / `inline_comment_text` normalize comments (strip
-    `#`/whitespace, respect quotes).
+  - Add `parser::parse_comments(content)` collecting EVERY comment in the file
+    — full-line `#` comments (headers, prose, commented-out assignments) and
+    inline `# comment` text — normalized to content (indentation, leading `#`
+    markers, and surrounding whitespace stripped; quoted `#` ignored). The
+    extraction is format-agnostic, so it lives in `mod.rs` instead of the
+    dotenv/YAML sub-parsers.
+  - Add `parser::ParsedComment { key, comment, lines }` and
+    `parser::parse_attached_comments(content, kind)` with per-format
+    extraction (dotenv, flat YAML, k8s YAML): a key's comment is the
+    consecutive prose `#` lines directly above it (a blank line, a non-comment
+    line, or a commented-out assignment breaks the block) plus the inline
+    `# comment` on its own line, normalized and joined with single spaces.
+    Commented-out assignment lines (`# KEY=value` / `# KEY: value`) never
+    attach and are compared among the "other comments" instead.
   - Add `comments: bool` to `Command::Compare` with
     `#[arg(long, conflicts_with_all = ["values", "order"])]` and dispatch it
     to `compare::run(&cli, file_path, values, order, comments)`.
   - Add a `DiffItem::CommentDiff { key, base_comment, peer_comment }` variant
-    and `comment_diffs()` comparing only keys present in both files; a key
-    documented on one side only counts as a difference (empty comment on the
-    bare side).
+    and a hybrid `comment_diffs()`: per-key pass first (keys present in BOTH
+    files, sorted by key; a key documented on one side only counts as a
+    difference), then a multiset pass over the comments remaining after
+    removing the attached lines of keys present in both files
+    (`subtract_comments`), reusing `multiset_diffs` for
+    `CommentMissing`/`CommentExtra`.
   - Render `CommentDiff` as a `- KEY # base_comment` / `+ KEY # peer_comment`
-    pair via `comment_label()`; a side without a comment renders as `- KEY` /
-    `+ KEY`.
-  - Add unit tests for parser comment extraction and `comment_diffs` /
-    `comment_label`.
+    pair via `comment_label()` (a side without a comment renders as `- KEY` /
+    `+ KEY`); render `CommentMissing`/`CommentExtra` via
+    `free_comment_label()` as `- # comment` / `+ # comment`.
+  - Add unit tests for per-key attachment, the hybrid `comment_diffs`
+    (ordering, consumption, free-comment multiset), and both labels.
   - Update spec/plan to document the behavior.
-  - Verify: `cargo build`, `cargo test` (170), `cargo clippy`, `cargo fmt`,
-    manual smoke test (`--comments` alone, and combined `--comments --values` /
-    `--comments --order` errors).
+  - Verify: `cargo build`, `cargo test` (195), `cargo clippy`, `cargo fmt`,
+    manual smoke test (commented-out keys above a real key, inline comments,
+    headers, YAML, per-key-before-free ordering, and combined
+    `--comments --values` / `--comments --order` errors).
 
 ## Verification
 

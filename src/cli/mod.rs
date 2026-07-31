@@ -196,7 +196,8 @@ pub enum Command {
         /// Also check that keys present in both files appear in the same order.
         #[arg(long, conflicts_with = "values")]
         order: bool,
-        /// Compare the comment attached to each key present in both files.
+        /// Compare comments: each key's attached comment, then every other
+        /// comment in the files.
         #[arg(long, conflicts_with_all = ["values", "order"])]
         comments: bool,
     },

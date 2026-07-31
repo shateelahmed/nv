@@ -94,23 +94,38 @@ against files of matching kinds:
 
 ### Comment comparison (`--comments`)
 
-- With `--comments`, the comment attached to each key present in BOTH files is
-  compared instead of keys or values.
-- A key's attached comment combines the consecutive `#` comment lines directly
-  above it (a blank or non-comment line breaks the block) with the inline
-  `# comment` on the key's own line. Comment text is normalized by stripping
-  leading `#` markers and whitespace; block and inline parts are joined with
-  single spaces, so the same comment written as a block or inline compares
-  equal.
-- Only keys present in both files participate; a key missing from either file
-  is a key-level difference and is ignored in comment mode.
-- A key with identical comments in both files is omitted.
-- A key documented in one file but not the other is a difference; the side
-  without a comment renders without a comment suffix.
-- Each differing key is shown as two lines: a `- KEY # base_comment` in
-  `removed` color and a `+ KEY # peer_comment` in `added` color, mirroring the
-  `Different` value pair. A side without a comment renders as just `- KEY` /
-  `+ KEY`.
+- With `--comments`, comments are compared in two passes shown together:
+  per-key attached comments first, then every other comment.
+- **Per-key pass (first).** Only keys present in BOTH files participate. A
+  key's attached comment is the consecutive prose `#` lines directly above it
+  plus the inline `# comment` on its own line, normalized and joined with
+  single spaces. When the attached comment differs (a key documented on one
+  side only counts as a difference), the key is shown as a
+  `- KEY # base_comment` in `removed` color and a `+ KEY # peer_comment` in
+  `added` color; a side without a comment renders as bare `- KEY` / `+ KEY`.
+  Per-key items are ordered by key name.
+- **Other-comments pass (second).** Every comment in the files is collected as
+  normalized text — full-line `#` comments (section headers, prose, and
+  commented-out assignments such as `# REDIS_ENTERPRISE_HOST=redis-enterprise`)
+  and inline `# comment` text. The comment lines consumed by the per-key pass
+  (attached to a key present in both files) are removed from each file's pool,
+  and the remaining pools are diffed as multisets: comments only in the base
+  pool are shown with a `-` prefix in `removed` color, comments only in the
+  peer pool with a `+` prefix in `added` color, each rendered as
+  `- # comment` / `+ # comment`.
+- Comment text is normalized for comparison by stripping indentation, leading
+  `#` markers, and surrounding whitespace; a `#` inside single or double
+  quotes is not treated as a comment. Prose block lines and an inline comment
+  attached to the same key compare equal when their text matches (`# DB` above
+  a key plus `# prod` inline equals a single `DB prod` comment).
+- A comment line that parses as a commented-out assignment (`KEY=value` in
+  dotenv, `KEY: value` in YAML) never attaches to a key and breaks any comment
+  block above it; such lines are always compared in the other-comments pass.
+- Comments attached to a key present in only one file are not per-key
+  comparable; they flow into the other-comments pass instead of being dropped.
+- Repeated comments are counted: a comment appearing more often in one pool
+  yields one item per excess occurrence. Position/order do not matter within
+  the other-comments pass.
 - `--comments` is mutually exclusive with `--values` and `--order` (clap
   `conflicts_with_all`); passing `--comments` with either errors with
   `the argument '--comments' cannot be used with '--values'` /
@@ -128,7 +143,8 @@ Options:
   --values   Also compare values for keys present in both files.
   --order    Also check that keys present in both files appear in the same order.
              Cannot be combined with --values.
-  --comments Compare the comment attached to each key present in both files.
+  --comments Compare comments: each key's attached comment, then every other
+             comment in the files.
              Cannot be combined with --values or --order.
 
 Uses global flags: --service (to disambiguate when the same path exists in
@@ -154,8 +170,10 @@ service_name/
     ├── + ANOTHER_EXTRA_KEY = other_value
     ├── - OUT_OF_ORDER_KEY (#base_pos)        (with --order)
     ├── + OUT_OF_ORDER_KEY (#peer_pos)
-    ├── - DOCUMENTED_KEY # base_comment       (with --comments)
-    └── + DOCUMENTED_KEY # peer_comment
+    ├── - KEY # base_comment                   (with --comments, per-key)
+    ├── + KEY # peer_comment
+    ├── - # MISSING_COMMENT                    (with --comments, other comments)
+    └── + # EXTRA_COMMENT
 ```
 
 Tree branches (`├──`, `└──`, `│`) use the same coloring rules as other
@@ -268,20 +286,36 @@ omitted.
 - [ ] Given a key that is present in both files but has both a different value
       and a different order, passing `--values --order` together errors with
       `the argument '--values' cannot be used with '--order'`.
-- [ ] Given a base `.env` with `# DB connection` above `DATABASE_URL` and a
-      peer `.env` with `# DB password` above `DATABASE_URL`, when `nv compare`
+- [ ] Given a base `.env` with commented-out keys `# REDIS_ENTERPRISE_HOST=
+      redis-enterprise`, `# REDIS_ENTERPRISE_PORT=12000`,
+      `# REDIS_ENTERPRISE_PASSWORD=secret` and a peer `.env` without them, when
+      `nv compare` runs with `--comments`, the output shows the three comments
+      with `- # ` prefixes under the peer file — even when those lines sit
+      directly above a real key (commented-out assignments never attach).
+- [ ] Given a base file with `FOO=bar # production` and a peer file with
+      `FOO=bar # development`, when `nv compare` runs with `--comments`, the
+      output shows `- FOO # production` and `+ FOO # development` (the inline
+      comments attach to `FOO`, which is present in both files).
+- [ ] Given a base file with `# DB connection` directly above `DATABASE_URL=x`
+      and a peer file with `DATABASE_URL=x` (no comment), when `nv compare`
       runs with `--comments`, the output shows `- DATABASE_URL # DB connection`
-      and `+ DATABASE_URL # DB password` under the peer file.
-- [ ] Given a key documented with `# DB` above it plus an inline `# prod`, and
-      a peer file with the same text written as a single `# DB prod` comment,
-      when `nv compare` runs with `--comments`, no difference is reported
-      (block and inline comments are normalized).
-- [ ] Given a key that is documented in the base file but has no comment in the
-      peer file, when `nv compare` runs with `--comments`, the output shows the
-      base comment on the `-` line and a bare `+ KEY` line.
-- [ ] Given a key present in only one of the files, when `nv compare` runs with
-      `--comments`, no difference is reported for that key (key-presence is a
-      key-level concern).
+      and `+ DATABASE_URL`, and the comment is NOT repeated as a `- #` item.
+- [ ] Given a base file with a blank-line-separated `# Header A` and a peer
+      file with `# Header B`, when `nv compare` runs with `--comments`, the
+      output shows `- # Header A` and `+ # Header B` (free comments are
+      compared as a multiset).
+- [ ] Given a key whose comment changed and a free comment removed, when
+      `nv compare` runs with `--comments`, the per-key pair appears before the
+      free-comment items in the output.
+- [ ] Given a comment attached to a key present only in the base file, when
+      `nv compare` runs with `--comments`, the comment is reported as a
+      `- # comment` free-comment item rather than being dropped.
+- [ ] Given two files with identical comments in a different order or
+      position, when `nv compare` runs with `--comments`, no difference is
+      reported (free comments are compared as a set).
+- [ ] Given a comment repeated twice in the base file and once in the peer
+      file, when `nv compare` runs with `--comments`, one `- # comment` item is
+      reported.
 - [ ] Given `--comments` combined with either `--values` or `--order`, the
       command errors with `the argument '--comments' cannot be used with
       '--values'` / `'--order'`.
@@ -315,15 +349,21 @@ omitted.
   parse error.
 - `--comments` is mutually exclusive with `--values` and `--order`; combining
   them is a clap parse error.
-- `--comments` only reports keys present in both files; key-presence
-  differences are left to the default key-only comparison.
-- `--comments` compares the normalized comment (leading `#`/whitespace
-  stripped, block and inline parts joined with spaces); a comment written as a
-  block above a key compares equal to the same text inline.
-- `--comments` treats a key documented in one file but not the other as a
-  difference, rendering the undocumented side as a bare `- KEY` / `+ KEY` line.
-- `--comments` attaches a comment block only when the `#` lines are directly
-  above the key (blank or non-comment lines break the block) and, for YAML,
-  only at the relevant indentation (top-level for flat files, child-level
-  inside k8s `data:`/`stringData:` blocks). Unattached comments (e.g. a header
-  above `data:`) are ignored.
+- `--comments` compares comments in two passes: per-key attached comments
+  first (only keys present in both files, sorted by key), then every other
+  comment as a multiset. The attached comment lines of keys present in both
+  files are removed from the multiset pools so nothing is reported twice.
+- `--comments` normalizes comment text (leading `#`/whitespace stripped,
+  quoted `#` ignored); comments differing only in indentation or `#`-spacing
+  compare equal, and a block plus an inline comment attached to the same key
+  compare equal to the joined text.
+- A comment line that parses as a commented-out assignment (`KEY=value` in
+  dotenv, `KEY: value` in YAML) never attaches to a key and breaks any comment
+  block above it; such lines are compared only in the other-comments pass.
+  YAML prose containing a colon (e.g. `# Note: this is a comment`) is
+  structurally indistinguishable and is treated the same way.
+- Comments attached to a key present in only one file cannot be compared
+  per-key; they flow into the other-comments pass instead of being dropped.
+- `--comments` compares free comments as a multiset; a comment repeated more
+  often in one pool yields one item per excess occurrence, and
+  position/order is ignored.

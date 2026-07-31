@@ -182,14 +182,39 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
     }
 }
 
+/// Collect scalar children of a block starting at `block_line`.
+///
+/// Children are the following lines that are indented *more* than the block
+/// header; the first line indented the same or less ends the block.
+fn collect_block_children(lines: &[String], block_line: usize) -> Vec<ParsedPair> {
+    let block_indent = indent_of(&lines[block_line]);
+    let mut out = Vec::new();
+    for line in &lines[block_line + 1..] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = indent_of(line);
+        if indent <= block_indent {
+            break; // dedented back out of the block
+        }
+        if let Some((_, key, value)) = mapping_of(line) {
+            out.push(ParsedPair { key, value });
+        }
+    }
+    out
+}
+
 /// Parse the comment attached to each key in YAML `content`.
 ///
 /// Works for both the flat and Kubernetes shapes. A key's comment is the
-/// consecutive `#` lines directly above it (top-level for the flat shape,
-/// inside the block at child indentation for the k8s shape) plus the inline
-/// `# comment` on its own line, normalized and joined with single spaces. Keys
-/// without any comment are omitted. Comments that are not attached to a key
-/// (e.g. a header above `data:`) are ignored.
+/// consecutive prose `#` lines directly above it (top-level for the flat
+/// shape, inside the block at child indentation for the k8s shape) plus the
+/// inline `# comment` on its own line, normalized and joined with single
+/// spaces. A commented-out mapping line (`# KEY: value`) never attaches to a
+/// key — it is compared among the "other comments" instead — and it breaks
+/// any comment block above a key. Keys without any comment are omitted.
+/// Comments that are not attached to a key (e.g. a header above `data:`) are
+/// ignored here; they flow into the "other comments" pool.
 pub fn parse_comments(content: &str) -> Vec<ParsedComment> {
     let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
@@ -216,9 +241,14 @@ fn collect_flat_comments(lines: &[String]) -> Vec<ParsedComment> {
         if trimmed.is_empty() {
             pending.clear();
         } else if trimmed.starts_with('#') {
-            // Only top-level comments attach to top-level keys.
+            // Only top-level comment lines attach to top-level keys.
             if indent_of(line) == 0 {
-                pending.push(super::comment_text(line));
+                let text = super::comment_text(line);
+                if is_commented_out_assignment(&text) {
+                    pending.clear();
+                } else {
+                    pending.push(text);
+                }
             } else {
                 pending.clear();
             }
@@ -238,8 +268,9 @@ fn collect_flat_comments(lines: &[String]) -> Vec<ParsedComment> {
 ///
 /// Children are the lines indented more than the block header; the first line
 /// indented the same or less ends the block. Comment lines at child
-/// indentation attach to the next child; comments at other indentation are
-/// dropped (block-level documentation).
+/// indentation attach to the next child; a commented-out mapping breaks the
+/// block and stays among the "other comments". Comments at other indentation
+/// are dropped (block-level documentation).
 fn collect_block_comments(lines: &[String], block_line: usize) -> Vec<ParsedComment> {
     let block_indent = indent_of(&lines[block_line]);
     let mut pending: Vec<String> = Vec::new();
@@ -256,7 +287,12 @@ fn collect_block_comments(lines: &[String], block_line: usize) -> Vec<ParsedComm
             break; // dedented back out of the block
         }
         if trimmed.starts_with('#') {
-            pending.push(super::comment_text(line));
+            let text = super::comment_text(line);
+            if is_commented_out_assignment(&text) {
+                pending.clear();
+            } else {
+                pending.push(text);
+            }
             continue;
         }
         if let Some((_, key, _)) = mapping_of(line) {
@@ -269,42 +305,36 @@ fn collect_block_comments(lines: &[String], block_line: usize) -> Vec<ParsedComm
     out
 }
 
+/// Whether `text` (a comment's content) is a commented-out mapping line.
+///
+/// Such lines look like `KEY: value` and are treated as standalone comments,
+/// never as a key's documentation. Prose containing a colon (e.g.
+/// `Note: this is a comment`) is structurally indistinguishable and is treated
+/// the same way.
+fn is_commented_out_assignment(text: &str) -> bool {
+    mapping_of(text).is_some()
+}
+
 /// Append a key's combined comment (pending block + inline) to `out` if the
-/// key has any comment text.
+/// key has any comment text, and clear the pending block.
 fn push_comment(out: &mut Vec<ParsedComment>, key: String, pending: &mut Vec<String>, line: &str) {
     let mut comment = pending.join(" ");
+    let mut lines = pending.clone();
     if let Some(inline) = super::inline_comment_text(line) {
         if !comment.is_empty() {
             comment.push(' ');
         }
         comment.push_str(&inline);
+        lines.push(inline);
     }
     if !comment.is_empty() {
-        out.push(ParsedComment { key, comment });
+        out.push(ParsedComment {
+            key,
+            comment,
+            lines,
+        });
     }
     pending.clear();
-}
-
-/// Collect scalar children of a block starting at `block_line`.
-///
-/// Children are the following lines that are indented *more* than the block
-/// header; the first line indented the same or less ends the block.
-fn collect_block_children(lines: &[String], block_line: usize) -> Vec<ParsedPair> {
-    let block_indent = indent_of(&lines[block_line]);
-    let mut out = Vec::new();
-    for line in &lines[block_line + 1..] {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let indent = indent_of(line);
-        if indent <= block_indent {
-            break; // dedented back out of the block
-        }
-        if let Some((_, key, value)) = mapping_of(line) {
-            out.push(ParsedPair { key, value });
-        }
-    }
-    out
 }
 
 /// Set `key` to `value`, editing in place or creating it, preserving all other
@@ -551,17 +581,20 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "DATABASE_URL".into(),
-                comment: "DB connection prod".into()
+                comment: "DB connection prod".into(),
+                lines: vec!["DB connection".into(), "prod".into()]
             }
         );
     }
 
     #[test]
-    fn comments_flat_header_not_attached() {
+    fn comments_flat_header_attaches_to_first_key() {
+        // A top-level header directly above a key is that key's comment.
         let content = "# Auth service\nA: 1\nB: 2\n";
         let comments = parse_comments(content);
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].key, "A");
+        assert_eq!(comments[0].comment, "Auth service");
     }
 
     #[test]
@@ -581,15 +614,48 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "DATABASE_URL".into(),
-                comment: "DB config prod".into()
+                comment: "DB config prod".into(),
+                lines: vec!["DB config".into(), "prod".into()]
             }
         );
     }
 
     #[test]
     fn comments_k8s_header_ignored() {
+        // The header sits above `data:` at top level, not inside the block.
         let content = "# Auth env\nkind: ConfigMap\ndata:\n  A: 1\n";
         let comments = parse_comments(content);
         assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_flat_commented_out_assignment_not_attached() {
+        let content = "# REDIS_ENTERPRISE_HOST: redis-enterprise\nDATABASE_URL: x\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_flat_commented_out_assignment_breaks_block() {
+        let content =
+            "# DB connection\n# REDIS_ENTERPRISE_HOST: redis-enterprise\nDATABASE_URL: x\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_k8s_commented_out_assignment_not_attached() {
+        let content = "kind: ConfigMap\ndata:\n  # REDIS_ENTERPRISE_HOST: redis-enterprise\n  DATABASE_URL: x\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_k8s_block_children_are_not_shared_across_blocks() {
+        let content =
+            "kind: Secret\ndata:\n  # DB config\n  DATABASE_URL: x\nstringData:\n  TOKEN: y\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].key, "DATABASE_URL");
     }
 }

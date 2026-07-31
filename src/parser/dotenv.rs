@@ -85,10 +85,12 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
 
 /// Parse the comment attached to each assignment in dotenv `content`.
 ///
-/// A key's comment is the consecutive `#` lines directly above it (a blank or
-/// other non-comment line breaks the block) plus the inline `# comment` on its
-/// own line, normalized and joined with single spaces. Keys without any comment
-/// are omitted.
+/// A key's comment is the consecutive prose `#` lines directly above it (a
+/// blank line, a non-comment line, or a commented-out assignment breaks the
+/// block) plus the inline `# comment` on its own line, normalized and joined
+/// with single spaces. A commented-out assignment line (`# KEY=value`) never
+/// attaches to a key — it is compared among the "other comments" instead.
+/// Keys without any comment are omitted.
 pub fn parse_comments(content: &str) -> Vec<ParsedComment> {
     let mut pending: Vec<String> = Vec::new();
     let mut out = Vec::new();
@@ -98,25 +100,50 @@ pub fn parse_comments(content: &str) -> Vec<ParsedComment> {
         if trimmed.is_empty() {
             pending.clear();
         } else if trimmed.starts_with('#') {
-            pending.push(super::comment_text(line));
+            let text = super::comment_text(line);
+            if is_commented_out_assignment(&text) {
+                pending.clear();
+            } else {
+                pending.push(text);
+            }
         } else if let Some((key, _)) = parse_line(line) {
-            let mut comment = pending.join(" ");
-            if let Some(inline) = super::inline_comment_text(line) {
-                if !comment.is_empty() {
-                    comment.push(' ');
-                }
-                comment.push_str(&inline);
-            }
-            if !comment.is_empty() {
-                out.push(ParsedComment { key, comment });
-            }
-            pending.clear();
+            push_attached(&mut out, key, &mut pending, line);
         } else {
             pending.clear();
         }
     }
 
     out
+}
+
+/// Whether `text` (a comment's content) is a commented-out assignment.
+///
+/// Such lines look like `KEY=value` and are treated as standalone comments,
+/// never as a key's documentation.
+fn is_commented_out_assignment(text: &str) -> bool {
+    parse_line(text).is_some()
+}
+
+/// Append a key's combined comment (pending block + inline) to `out` if the
+/// key has any comment text, and clear the pending block.
+fn push_attached(out: &mut Vec<ParsedComment>, key: String, pending: &mut Vec<String>, line: &str) {
+    let mut comment = pending.join(" ");
+    let mut lines = pending.clone();
+    if let Some(inline) = super::inline_comment_text(line) {
+        if !comment.is_empty() {
+            comment.push(' ');
+        }
+        comment.push_str(&inline);
+        lines.push(inline);
+    }
+    if !comment.is_empty() {
+        out.push(ParsedComment {
+            key,
+            comment,
+            lines,
+        });
+    }
+    pending.clear();
 }
 
 /// Remove `key` from `content`, preserving comments and blank lines.
@@ -280,7 +307,8 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "DATABASE_URL".into(),
-                comment: "DB connection".into()
+                comment: "DB connection".into(),
+                lines: vec!["DB connection".into()]
             }
         );
     }
@@ -293,7 +321,8 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "FOO".into(),
-                comment: "the foo".into()
+                comment: "the foo".into(),
+                lines: vec!["the foo".into()]
             }
         );
     }
@@ -307,7 +336,8 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "DATABASE_URL".into(),
-                comment: "DB uses TLS production".into()
+                comment: "DB uses TLS production".into(),
+                lines: vec!["DB".into(), "uses TLS".into(), "production".into()]
             }
         );
     }
@@ -335,7 +365,8 @@ mod tests {
             comments[0],
             ParsedComment {
                 key: "FOO".into(),
-                comment: "exported".into()
+                comment: "exported".into(),
+                lines: vec!["exported".into()]
             }
         );
     }
@@ -351,5 +382,47 @@ mod tests {
         let comments = parse_comments("FOO=\"a # b\" # real\n");
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].comment, "real");
+    }
+
+    #[test]
+    fn comments_commented_out_assignment_not_attached() {
+        // Even directly above a real key, a commented-out assignment is not
+        // the key's documentation — it stays among the "other comments".
+        let content = "# REDIS_ENTERPRISE_HOST=redis-enterprise\nDATABASE_URL=x\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_commented_out_assignment_breaks_block() {
+        // The commented-out line interrupts the prose block above the key.
+        let content = "# DB connection\n# REDIS_ENTERPRISE_HOST=redis-enterprise\nDATABASE_URL=x\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_prose_after_commented_out_assignment_attaches() {
+        // Prose below a commented-out line still attaches to the next key.
+        let content = "# REDIS_ENTERPRISE_HOST=redis-enterprise\n# DB connection\nDATABASE_URL=x\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "DATABASE_URL".into(),
+                comment: "DB connection".into(),
+                lines: vec!["DB connection".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn comments_prose_not_an_assignment_attaches() {
+        // `# Redis settings` has no `=`, so it is prose and attaches.
+        let content = "# Redis settings\nREDIS_HOST=localhost\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].comment, "Redis settings");
     }
 }

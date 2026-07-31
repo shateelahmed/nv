@@ -212,7 +212,7 @@ nv compare .env.example --values
 # Also flag keys that appear in a different order
 nv compare .env.example --order
 
-# Compare the comment documentation attached to each key
+# Compare each key's attached comment, then every other comment in the files
 nv compare .env.example --comments
 
 # Preview a change without writing

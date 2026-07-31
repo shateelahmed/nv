@@ -66,14 +66,17 @@ pub struct ParsedPair {
 
 /// A key and the comment attached to it in a file.
 ///
-/// The comment combines the `#` comment lines directly above the key with an
-/// optional inline `# comment` on the key's own line. Lines are normalized
-/// (leading `#` and whitespace stripped) and joined with single spaces, so the
-/// same comment written as a block or inline compares equal.
+/// The comment combines the prose `#` comment lines directly above the key
+/// with an optional inline `# comment` on the key's own line. `comment` holds
+/// the lines joined with single spaces (so a block or an inline rendering of
+/// the same text compares equal); `lines` holds each normalized line
+/// individually so `nv compare` can remove exactly the consumed lines from the
+/// file's "other comments" pool.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedComment {
     pub key: String,
     pub comment: String,
+    pub lines: Vec<String>,
 }
 
 /// Parse the key/value pairs from file `content` of the given `kind`.
@@ -87,13 +90,37 @@ pub fn parse(content: &str, kind: FileKind) -> Vec<ParsedPair> {
     }
 }
 
+/// Parse every comment in `content` into comparable, normalized text.
+///
+/// A comment is either a full line whose trimmed start is `#` or an inline
+/// `# comment` trailing a value line. Each is normalized via [`comment_text`]
+/// / [`inline_comment_text`] (leading `#` markers and whitespace stripped) and
+/// collected in file order. The extraction is identical for dotenv and YAML
+/// files, so it is implemented here rather than per sub-parser.
+pub fn parse_comments(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            out.push(comment_text(line));
+        } else if let Some(inline) = inline_comment_text(line) {
+            out.push(inline);
+        }
+    }
+    out
+}
+
 /// Parse the comment attached to each key in file `content` of the given `kind`.
 ///
 /// Only keys that have a comment produce an entry; keys without any comment
-/// are absent. Delegates to the YAML or dotenv parser depending on the file
-/// kind. The returned comments are normalized via [`comment_text`] /
-/// [`inline_comment_text`].
-pub fn parse_comments(content: &str, kind: FileKind) -> Vec<ParsedComment> {
+/// are absent. Commented-out assignment lines (`# KEY=value` / `# KEY: value`)
+/// never attach to a key — they are compared among the "other comments"
+/// instead — and they break any comment block above a key. Delegates to the
+/// YAML or dotenv parser depending on the file kind.
+pub fn parse_attached_comments(content: &str, kind: FileKind) -> Vec<ParsedComment> {
     if kind.is_yaml() {
         yaml::parse_comments(content)
     } else {
@@ -112,8 +139,8 @@ pub(crate) fn comment_text(line: &str) -> String {
 ///
 /// Returns `None` when there is no inline comment. The `#` must be preceded by
 /// whitespace (space or tab) and must not sit inside single or double quotes,
-/// matching how YAML inline comments are delimited. Callers handle full-line
-/// comment lines separately before invoking this.
+/// matching how YAML inline comments are delimited. Full-line comments are
+/// handled separately by [`parse_comments`] before this is consulted.
 pub(crate) fn inline_comment_text(line: &str) -> Option<String> {
     let bytes = line.as_bytes();
     let mut in_single = false;
@@ -269,5 +296,69 @@ mod tests {
             kind("configmap-api.yaml.example"),
             Some(FileKind::ConfigMap)
         );
+    }
+
+    #[test]
+    fn comments_full_line_collected_in_order() {
+        let comments = parse_comments("# first\n# second\nFOO=bar\n");
+        assert_eq!(comments, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn comments_commented_out_key_is_collected() {
+        // A commented-out assignment is still a comment.
+        let comments = parse_comments("# REDIS_ENTERPRISE_HOST=redis-enterprise\nFOO=bar\n");
+        assert_eq!(comments, vec!["REDIS_ENTERPRISE_HOST=redis-enterprise"]);
+    }
+
+    #[test]
+    fn comments_inline_on_value_line() {
+        let comments = parse_comments("FOO=bar # the foo\n");
+        assert_eq!(comments, vec!["the foo"]);
+    }
+
+    #[test]
+    fn comments_header_border_normalized() {
+        let comments = parse_comments("#################### REDIS SETTINGS ####################\n");
+        assert_eq!(comments, vec!["REDIS SETTINGS ####################"]);
+    }
+
+    #[test]
+    fn comments_blank_lines_skipped() {
+        let comments = parse_comments("\n\n# a\n\nFOO=bar\n\n");
+        assert_eq!(comments, vec!["a"]);
+    }
+
+    #[test]
+    fn comments_quoted_hash_ignored() {
+        // The `#` inside quotes is not a comment; the trailing one is.
+        let comments = parse_comments("FOO=\"a # b\" # real\n");
+        assert_eq!(comments, vec!["real"]);
+    }
+
+    #[test]
+    fn comments_hash_without_whitespace_not_inline() {
+        let comments = parse_comments("FOO=abc#def\n");
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_yaml_mapping_inline() {
+        let comments = parse_comments("DATABASE_URL: postgres://x # prod\n");
+        assert_eq!(comments, vec!["prod"]);
+    }
+
+    #[test]
+    fn comments_yaml_k8s_comments_all_collected() {
+        let content =
+            "# Auth env\nkind: ConfigMap\ndata:\n  # DB config\n  DATABASE_URL: x # prod\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments, vec!["Auth env", "DB config", "prod"]);
+    }
+
+    #[test]
+    fn comments_duplicates_preserved() {
+        let comments = parse_comments("# retry\nFOO=bar # retry\n");
+        assert_eq!(comments, vec!["retry", "retry"]);
     }
 }
