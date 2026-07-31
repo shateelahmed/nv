@@ -1,12 +1,14 @@
 //! `nv compare` — compare an env file against other files of the same kind.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 
 use anyhow::{Result, bail};
+use glob::Pattern;
 
 use super::{Cli, context};
 use crate::color::{self, AnsiColor, ColorConfig};
+use crate::config;
 use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::FileKind;
 use crate::parser;
@@ -61,6 +63,34 @@ fn to_map(pairs: &[ParsedPair]) -> BTreeMap<&str, &str> {
         .iter()
         .map(|p| (p.key.as_str(), p.value.as_str()))
         .collect()
+}
+
+/// Check if a file path matches any skip_files pattern.
+///
+/// Supports glob patterns: `*` matches any characters except `/`, `**` matches
+/// any characters including `/` (recursive). Matches are tried against both the
+/// relative path from the service root and the bare file name.
+fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<String>) -> bool {
+    for pattern in skip_files {
+        if let Ok(glob_pattern) = Pattern::new(pattern)
+            && (glob_pattern.matches(relative_str) || glob_pattern.matches(name))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Build the merged set of files to skip for a service — global
+/// `commands.compare.skip_files` plus per-service entries.
+fn build_skip_files(config: &Option<config::Config>, service: &str) -> HashSet<String> {
+    let mut skip: HashSet<String> = HashSet::new();
+    if let Some(cfg) = config {
+        for file in cfg.compare_skip_files_for(service) {
+            skip.insert(file.to_string());
+        }
+    }
+    skip
 }
 
 /// Compute the diff between base pairs and peer pairs.
@@ -153,20 +183,18 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
         .collect();
 
     if matching.is_empty() {
-        let all_files: Vec<&str> = ctx
-            .services
-            .iter()
-            .flat_map(|s| s.files.iter().map(|f| f.display.as_str()))
-            .collect();
-        let hint = if all_files.is_empty() {
-            String::new()
+        let tree = available_files_tree(
+            &ctx.services,
+            &service_filter,
+            &ctx.colors(),
+            color::should_use_color(),
+        );
+        let tree = if tree.is_empty() {
+            tree
         } else {
-            let mut shown = all_files.clone();
-            shown.sort();
-            shown.dedup();
-            format!("\nAvailable files: {}", shown.join(", "))
+            format!("Available files:\n{}", tree)
         };
-        bail!("file '{}' not found in any service.{}", file_path, hint);
+        bail!("file '{}' not found.\n{}", file_path, tree);
     }
 
     if matching.len() > 1 {
@@ -198,11 +226,21 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             continue;
         }
 
+        let skip_files = build_skip_files(&ctx.config, &service.name);
+
         for file in &service.files {
             if !peer_kinds.contains(&file.kind) {
                 continue;
             }
             if svc_idx == base_svc_idx && file.display == base_file.display {
+                continue;
+            }
+
+            // Skip peer files matching configured skip_files patterns.
+            let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
+            let relative_str = relative.to_str().unwrap_or("");
+            let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if matches_skip_pattern(relative_str, name, &skip_files) {
                 continue;
             }
 
@@ -236,6 +274,46 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
     print_comparisons(&comparisons, &colors, use_color);
 
     Ok(())
+}
+
+/// Build the available-files listing in the uniform tree format, as a string.
+///
+/// Used when the requested base file path is not found, so the user can see the
+/// valid paths at a glance. When `service_filter` is non-empty, only those
+/// services' files are included.
+fn available_files_tree(
+    services: &[crate::model::Service],
+    service_filter: &[&str],
+    colors: &ColorConfig,
+    use_color: bool,
+) -> String {
+    let trees: Vec<TreeService> = services
+        .iter()
+        .filter(|s| {
+            !s.files.is_empty()
+                && (service_filter.is_empty() || service_filter.iter().any(|n| n == &s.name))
+        })
+        .map(|s| TreeService {
+            name: s.name.clone(),
+            count: s.files.len(),
+            files: s
+                .files
+                .iter()
+                .map(|f| TreeFile {
+                    name: f.display.clone(),
+                    count: 0,
+                    items: Vec::new(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    let mut out = Output::String(String::new());
+    display::render_tree(&trees, colors, use_color, false, &mut out);
+    match out {
+        Output::String(s) => s,
+        _ => unreachable!("we always render into a string"),
+    }
 }
 
 /// Print comparison results grouped by service, then by file.
@@ -333,7 +411,7 @@ fn print_comparisons(
         .collect();
 
     let mut out = Output::Stdout;
-    display::render_tree(&services, colors, use_color, &mut out);
+    display::render_tree(&services, colors, use_color, true, &mut out);
 
     eprintln!("\n{} difference(s) found.", total);
 }
@@ -523,5 +601,72 @@ mod tests {
         assert!(label.contains("K = "));
         assert!(label.contains("v"));
         assert!(label.ends_with("\x1b[0m"));
+    }
+
+    fn skip_set(patterns: &[&str]) -> HashSet<String> {
+        patterns.iter().map(|p| p.to_string()).collect()
+    }
+
+    #[test]
+    fn test_matches_skip_pattern_exact_relative_path() {
+        let skip = skip_set(&["docker/.env"]);
+        assert!(matches_skip_pattern("docker/.env", ".env", &skip));
+        assert!(!matches_skip_pattern(
+            "docker/.env.example",
+            ".env.example",
+            &skip
+        ));
+    }
+
+    #[test]
+    fn test_matches_skip_pattern_file_name() {
+        let skip = skip_set(&["custom.env"]);
+        // A bare name matches any sub-path ending in that file name.
+        assert!(matches_skip_pattern(
+            "docker/custom.env",
+            "custom.env",
+            &skip
+        ));
+        assert!(!matches_skip_pattern(
+            "docker/other.env",
+            "other.env",
+            &skip
+        ));
+    }
+
+    #[test]
+    fn test_matches_skip_pattern_glob_double_star() {
+        let skip = skip_set(&["docker/**/*.env*"]);
+        assert!(matches_skip_pattern(
+            "docker/app/.env.example",
+            ".env.example",
+            &skip
+        ));
+        assert!(matches_skip_pattern("docker/.env", ".env", &skip));
+        assert!(!matches_skip_pattern("billing/.env", ".env", &skip));
+    }
+
+    #[test]
+    fn test_matches_skip_pattern_single_glob() {
+        let skip = skip_set(&["*.test.env"]);
+        assert!(matches_skip_pattern(
+            "auth.test.env",
+            "auth.test.env",
+            &skip
+        ));
+        // The bare-name match also covers nested paths with the same file name.
+        assert!(matches_skip_pattern(
+            "docker/auth.test.env",
+            "auth.test.env",
+            &skip
+        ));
+        // But not a different file name.
+        assert!(!matches_skip_pattern("docker/app.env", "app.env", &skip));
+    }
+
+    #[test]
+    fn test_build_skip_files_empty_without_config() {
+        let skip = build_skip_files(&None, "auth");
+        assert!(skip.is_empty());
     }
 }

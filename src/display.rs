@@ -35,6 +35,9 @@ pub enum Output {
 
 /// Render a hierarchical tree to the given output.
 ///
+/// `show_file_counts` controls whether each file line carries its item count
+/// (`file_name (count)`); set to `false` for bare file listings.
+///
 /// Structure:
 /// ```text
 /// service_name/ (count)
@@ -48,6 +51,7 @@ pub fn render_tree(
     services: &[TreeService],
     colors: &ColorConfig,
     use_color: bool,
+    show_file_counts: bool,
     out: &mut Output,
 ) {
     for service in services {
@@ -77,13 +81,23 @@ pub fn render_tree(
             };
             let pipe = if is_last_file { "    " } else { "│   " };
 
-            // File-level branch in service color (parent node).
-            let file_line = format!(
-                "{}{} {}\n",
-                color::colorize(branch, colors.service_root, use_color),
-                color::colorize(&file.name, colors.file, use_color),
-                color::colorize(&format!("({})", file.count), colors.file, use_color),
-            );
+            // File-level branch in service color (parent node). The count is
+            // optional; some listings (e.g. the compare "available files"
+            // diagnostic) show bare file names.
+            let file_line = if show_file_counts {
+                format!(
+                    "{}{} {}\n",
+                    color::colorize(branch, colors.service_root, use_color),
+                    color::colorize(&file.name, colors.file, use_color),
+                    color::colorize(&format!("({})", file.count), colors.file, use_color),
+                )
+            } else {
+                format!(
+                    "{}{}\n",
+                    color::colorize(branch, colors.service_root, use_color),
+                    color::colorize(&file.name, colors.file, use_color),
+                )
+            };
             write_output(out, &file_line);
 
             // Items under this file.
@@ -139,7 +153,7 @@ mod tests {
     fn empty_services_produces_no_output() {
         let colors = ColorConfig::default();
         let mut out = Output::String(String::new());
-        render_tree(&[], &colors, false, &mut out);
+        render_tree(&[], &colors, false, true, &mut out);
         assert!(output_string(&out).is_empty());
     }
 
@@ -159,7 +173,7 @@ mod tests {
         }];
         let colors = ColorConfig::default();
         let mut out = Output::String(String::new());
-        render_tree(&services, &colors, false, &mut out);
+        render_tree(&services, &colors, false, true, &mut out);
         let text = output_string(&out);
         assert!(text.contains("auth/ (1)"));
         assert!(text.contains(".env (1)"));
@@ -209,7 +223,7 @@ mod tests {
         ];
         let colors = ColorConfig::default();
         let mut out = Output::String(String::new());
-        render_tree(&services, &colors, false, &mut out);
+        render_tree(&services, &colors, false, true, &mut out);
         let text = output_string(&out);
         // First service has 2 files → first uses ├──, second uses └──
         assert!(text.contains("├── .env (1)"));

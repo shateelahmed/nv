@@ -4,6 +4,7 @@
 - **Status:** Implemented
 - **Author:** shateel
 - **Date:** 2026-07-30
+- **Updated:** 2026-07-31
 
 ## Summary
 
@@ -109,6 +110,56 @@ commands (service color for service lines, file color for file lines).
 Individual item lines use `added`/`removed` colors (green/red) for the
 `+`/`-` prefixes.
 
+### Configuration
+
+Files to exclude from comparison can be configured globally or per-service in
+`nv.yml`.
+
+**Global configuration** (applies to all services):
+```yaml
+commands:
+  compare:
+    skip_files:
+      - docker/.env
+      - "*.example.env"
+```
+
+**Per-service configuration** (applies only to that service):
+```yaml
+services:
+  auth:
+    path: services/auth
+    commands:
+      compare:
+        skip_files:
+          - .env.testing.example
+          - docker/**/*.env*
+```
+
+- Global and per-service `skip_files` MUST be merged when comparing within a
+  service.
+- `skip_files` entries support glob patterns:
+  - `*` matches any characters except `/` (within a single path segment)
+  - `**` matches any characters including `/` (recursive across directories)
+  - `?` matches a single character
+- `skip_files` entries are matched against the relative path from the service
+  root directory (e.g., `docker/.env`, `docker/app/.env.example`).
+- `skip_files` entries can also match just the file name (e.g., `custom.env`).
+- The base file is NEVER skipped — it is the file the user explicitly asked to
+  compare. Only peer (compared) files are filtered.
+- `skip_files` has no built-in defaults.
+
+### File not found
+
+When the base file path is not found in any service, the command MUST print the
+error message `file '<path>' not found.` first, then the header
+`Available files:`, then a listing of the available files in the uniform
+hierarchical tree format (grouped by service) so the user can pick a valid
+path. File lines in this listing MUST show bare file names without item counts.
+When `--service` is provided, the tree MUST only include files from the
+specified service(s). When the tree is empty, the `Available files:` header is
+omitted.
+
 ## Acceptance criteria
 
 - [ ] Given a `.env.example` with keys `A`, `B` and another `.env.example`
@@ -119,14 +170,32 @@ Individual item lines use `added`/`removed` colors (green/red) for the
 - [ ] Given `--values` and two files with key `K` set to `v1` and `v2`,
       the output shows `- K = v1` and `+ K = v2`.
 - [ ] Given an invalid or non-existent file path, the command errors with a
-      clear message.
+      clear message (`file '<path>' not found.`) printed first, followed by
+      `Available files:` and the file tree in the uniform tree format with bare
+      file names (no counts).
+- [ ] Given an invalid path with `--service auth`, the available files tree
+      lists only `auth`'s files.
+- [ ] Given a service `auth` with `compare.skip_files: [.env.testing.example]`
+      and a key present only in `auth/.env.testing.example`, when `nv compare`
+      runs against another file, the `.env.testing.example` file is NOT shown
+      as a compared file.
+- [ ] Given global `compare.skip_files: [docker/.env]`, when `nv compare` runs,
+      `docker/.env` files are excluded from comparison in every service.
+- [ ] Given `compare.skip_files: [custom.env]` where `custom.env` is a
+      sub-path (e.g., `docker/custom.env`), when `nv compare` runs, the file
+      is excluded by its file name alone.
 
 ## Edge cases
 
-- Base file not found in any service → error.
+- Base file not found in any service → error `file '<path>' not found.`
+  printed first, then `Available files:` and the available-files tree (uniform
+  output format, bare file names without counts); with `--service`, the tree
+  contains only the specified service(s); an empty tree omits the header.
 - Base file path matches multiple services without `--service` → error with
   disambiguation hint.
 - No other files of the same kind → "No comparisons found."
 - Binary or unreadable compared files → silently skipped.
+- Files matching a `compare.skip_files` pattern → excluded from comparison.
+- The base file is never excluded by `skip_files`.
 - Dotenv vs DotenvExample: both directions are compared, but only files
   resolvable through service discovery are included.

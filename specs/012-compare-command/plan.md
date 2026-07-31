@@ -2,6 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md)
 - **Status:** Implemented
+- **Updated:** 2026-07-31
 
 ## Overview
 
@@ -15,7 +16,8 @@ the standard tree format. The implementation follows the same patterns as
 | Module | Change | Responsibility |
 | --- | --- | --- |
 | `src/cli/mod.rs` | edit | Register `Command::Compare` variant and dispatch path. |
-| `src/cli/compare.rs` | **new** | Core comparison logic: find base file, gather peers, diff, render. |
+| `src/cli/compare.rs` | edit | Core comparison logic: find base file, gather peers, diff, render. |
+| `src/config.rs` | edit | Add `CompareConfig` with `skip_files` and register under `commands.compare`. |
 | `src/model.rs` | edit | (optional) Add helper to find a file by display path across services. |
 
 No new dependencies. Uses existing `parser::parse()`, `display::render_tree()`,
@@ -33,6 +35,7 @@ determine base kind → compute peer kinds
   ↓
 for each service:
   for each file with matching kind and different from base:
+    skip if file matches a merged skip_files pattern
     parse file content → Vec<ParsedPair>
     compute diff:
       keys in base but not in peer → - items (removed color)
@@ -62,6 +65,25 @@ render_tree()
   exists in multiple services, the user must specify `--service` — **Because:**
   clear error over silent ambiguity.
 - **Silently skip unreadable peer files:** Same behavior as leaks/duplicates.
+- **`skip_files` follows the `unused` pattern:** A `CompareConfig` with a
+  `skip_files: Vec<String>` list is merged globally + per-service, and matches
+  via `glob::Pattern` against the relative path and the file name. The same
+  helper approach as `special_secret_keys_for` — **Because:** consistent with
+  the established `unused` command, and reuses the same glob-matching semantics
+  users already know.
+- **The base file is never filtered by `skip_files`:** It is the file the user
+  explicitly requested — **Because:** filtering it would produce a confusing
+  "not found" error for a path the user clearly intended.
+- **Not-found error lists files via `render_tree`:** The message is
+  `file '<path>' not found.` and the available files are rendered with the same
+  `TreeService`/`TreeFile`/`render_tree` machinery (items empty) — **Because:**
+  golden rule 6 requires the uniform output format everywhere, not a
+  comma-separated hint. The tree is embedded in the error string so the message
+  prints first, it respects `--service` so only the requested services' files
+  are shown — **Because:** an unrequested service's files would just be noise
+  when the user already scoped the command — and file counts are suppressed via
+  `render_tree(..., show_file_counts: false)` since a `(0)` count after a bare
+  filename in a diagnostic listing is meaningless noise.
 
 ## Dependencies
 
@@ -76,6 +98,8 @@ None. Reuses `parser::parse()`, `display::render_tree()`, `color` module.
 
 ## Assistant configs
 
-This spec introduces a new command (`compare`) and the `--values` flag. It does
-not change any durable rule, convention, or project guarantee. No
-assistant-config change is required.
+This spec adds `skip_files` configuration for the `compare` command and refines
+the not-found error message. Both follow the existing patterns (`unused`
+`skip_files`, uniform tree output per golden rule 6). It does not change any
+durable rule, convention, or project guarantee. No assistant-config change is
+required.

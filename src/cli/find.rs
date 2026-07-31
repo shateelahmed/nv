@@ -111,7 +111,7 @@ fn print_hierarchical_output(results: &[&EnvKey], colors: &ColorConfig, use_colo
         .collect();
 
     let mut out = Output::Stdout;
-    display::render_tree(&services, colors, use_color, &mut out);
+    display::render_tree(&services, colors, use_color, true, &mut out);
 }
 
 #[cfg(test)]

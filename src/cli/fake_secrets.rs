@@ -264,7 +264,7 @@ fn print_fake_secrets(fake_secrets: &[FakeSecret], colors: &ColorConfig, use_col
         .collect();
 
     let mut out = Output::Stdout;
-    display::render_tree(&services, colors, use_color, &mut out);
+    display::render_tree(&services, colors, use_color, true, &mut out);
 
     eprintln!("\n{} fake secret(s) found.", fake_secrets.len());
 }

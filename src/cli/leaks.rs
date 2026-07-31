@@ -242,7 +242,7 @@ fn print_leaks(leaks: &[Leak], colors: &ColorConfig, use_color: bool) {
         .collect();
 
     let mut out = Output::Stdout;
-    display::render_tree(&services, colors, use_color, &mut out);
+    display::render_tree(&services, colors, use_color, true, &mut out);
 
     eprintln!("\n{} potential leak(s) found.", leaks.len());
 }

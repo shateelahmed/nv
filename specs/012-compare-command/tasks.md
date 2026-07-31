@@ -2,6 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md)
 - **Status:** Implemented
+- **Updated:** 2026-07-31
 
 ## Task list
 
@@ -32,6 +33,58 @@
   - Test `diff_keys` with `--values` mode.
   - Test empty base file, empty peer file.
   - Verify: `cargo test`.
+
+- [x] **T4: Add `CompareConfig` with `skip_files` to `nv.yml` schema**
+  - File: `src/config.rs`
+  - Add `CompareConfig { skip_files: Vec<String> }`.
+  - Register `compare: Option<CompareConfig>` on `CommandsConfig`.
+  - Add a merge helper (global + per-service) analogous to
+    `special_secret_keys_for`, e.g. `Config::compare_skip_files_for(&service)`.
+  - Verify: `cargo build`.
+
+- [x] **T5: Apply `skip_files` filtering to peer files**
+  - File: `src/cli/compare.rs`
+  - Import `glob::Pattern`; add a `matches_skip_pattern(relative, name, skip_files)`
+    helper matching `unused.rs`.
+  - In `run`, build the merged skip set per service and skip peer files that match.
+  - Never filter the base file.
+  - Verify: `cargo build`, `cargo test`.
+
+- [x] **T6: Rework the not-found error to list available files in tree format**
+  - File: `src/cli/compare.rs`
+  - Change message to `file '<path>' not found.` (drop "in any service").
+  - Build `TreeService`/`TreeFile` (empty items) from discovered files and
+    render via `display::render_tree` to `Output::Stderr` before returning the
+    error.
+  - Verify: `cargo build`, `cargo test`.
+
+- [x] **T7: Unit tests for skip_files and error output**
+  - File: `src/cli/compare.rs` `#[cfg(test)] mod tests`
+  - Test `matches_skip_pattern` for relative path, file name, and glob patterns.
+  - Test that `diff_pairs` is unaffected (skip is applied before diffing).
+  - Verify: `cargo test`.
+
+- [x] **T8: Update `nv.yml.example` with `commands.compare.skip_files` docs**
+  - File: `nv.yml.example`
+  - Document global + per-service `compare.skip_files`.
+  - Verify: `cargo build`.
+
+- [x] **T9: Print the not-found error before the file tree; scope the tree to `--service`**
+  - File: `src/cli/compare.rs`
+  - Render the available-files tree into a `String` and embed it in the
+    `file '<path>' not found.` error so the message prints first.
+  - Filter the tree by `service_filter` when `--service` is provided.
+  - Add an `Available files:` header between the error and the tree (omitted
+    when the tree is empty).
+  - Update spec/plan to document the behavior.
+  - Verify: `cargo build`, `cargo test`, manual smoke test.
+
+- [x] **T10: Hide file counts in the available-files tree**
+  - File: `src/display.rs`, `src/cli/compare.rs`
+  - Add a `show_file_counts` parameter to `render_tree`; pass `false` for the
+    available-files listing so bare file names appear without `(count)`.
+  - Other commands pass `true` (unchanged output).
+  - Verify: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`.
 
 ## Verification
 

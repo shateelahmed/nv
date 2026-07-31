@@ -206,7 +206,7 @@ impl ChangeSet {
             .collect();
 
         let mut out = Output::String(String::new());
-        display::render_tree(&services, colors, use_color, &mut out);
+        display::render_tree(&services, colors, use_color, true, &mut out);
 
         if total_diffs > 0 {
             display::render_summary(

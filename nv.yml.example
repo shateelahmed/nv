@@ -54,7 +54,9 @@ services_root: ./services
 # are treated as secret keys by both commands: `nv leaks` detects them as
 # potential leaks, and `nv fake-secrets` excludes them from reporting.
 # `commands.unused.skip_dirs` and `commands.unused.skip_files` narrow the
-# search scope for `nv unused` within that service.
+# search scope for `nv unused` within that service.  Files listed in
+# `commands.compare.skip_files` are excluded from `nv compare` within that
+# service (glob patterns allowed).
 #
 # services:
 #   auth:
@@ -71,6 +73,9 @@ services_root: ./services
 #         skip_files:
 #           - custom.js
 #           - docker/**/*.env*
+#       compare:
+#         skip_files:
+#           - .env.testing.example
 
 # ─── Secret generation presets ───────────────────────────────────────────────
 # Per-key overrides for `nv generate`.  Each entry maps a key name to a
@@ -113,6 +118,13 @@ services_root: ./services
 #     skip_files:
 #       - "**/*.test.js"
 #       - "docker/**/*.env*"
+#   # `commands.compare.skip_files` excludes files from `nv compare`.
+#   # Entries match the path relative to the service root and the bare file
+#   # name.  Glob patterns (`*`, `**`, `?`) are supported.
+#   compare:
+#     skip_files:
+#       - docker/.env
+#       - "*.example.env"
 
 # ─── Color configuration ────────────────────────────────────────────────────
 # Customise ANSI colors for CLI output.  Available color names:

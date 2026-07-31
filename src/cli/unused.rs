@@ -595,7 +595,7 @@ fn print_unused_keys(keys: &[KeyLocation], colors: &crate::color::ColorConfig, u
         .collect();
 
     let mut out = Output::Stderr;
-    display::render_tree(&services, colors, use_color, &mut out);
+    display::render_tree(&services, colors, use_color, true, &mut out);
 
     eprintln!(
         "\n{}",
