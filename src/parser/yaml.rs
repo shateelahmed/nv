@@ -474,6 +474,127 @@ fn block_insert_point(lines: &[String], start: usize, block_indent: usize) -> (u
     (last_child + 1, child_indent)
 }
 
+/// Return `content` with its keys reordered to follow `order`.
+///
+/// Flat YAML files reorder their top-level keys; Kubernetes manifests reorder
+/// the scalar children of each `stringData:`/`data:` block independently,
+/// never moving a key between blocks. Keys absent from `order` move to the
+/// bottom, keeping their relative order. Each key travels with its attached
+/// comment block and trailing blank lines; every other line stays exactly where
+/// it is. Values are never rewritten.
+pub fn reorder(content: &str, order: &[String]) -> String {
+    let newline = crate::parser::detect_newline(content);
+    let ends_with_newline = content.ends_with('\n');
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    lines = if is_k8s(&lines) {
+        reorder_k8s(&lines, order)
+    } else {
+        super::reorder::reorder_region(
+            &lines,
+            flat_key_of,
+            flat_comment_attaches,
+            |text| mapping_of(text).is_some(),
+            order,
+        )
+    };
+
+    let mut out = lines.join(newline);
+    if !content.is_empty() && ends_with_newline {
+        out.push_str(newline);
+    }
+    out
+}
+
+/// The key of a flat top-level mapping line, or `None` for anything else.
+///
+/// Matches the flat parser: only top-level (indent 0) entries with a non-empty
+/// value count as keys.
+fn flat_key_of(line: &str) -> Option<String> {
+    mapping_of(line).and_then(|(indent, key, value)| {
+        if indent == 0 && !value.is_empty() {
+            Some(key)
+        } else {
+            None
+        }
+    })
+}
+
+/// Whether a full-line comment in a flat file can attach to a key (only
+/// top-level comments do, matching the comment parser).
+fn flat_comment_attaches(line: &str) -> bool {
+    indent_of(line) == 0
+}
+
+/// The key of a k8s block's direct child at `child_indent`, or `None`.
+///
+/// Only direct children reorder; deeper-indented (nested) content stays fixed.
+fn k8s_key_of(line: &str, child_indent: usize) -> Option<String> {
+    mapping_of(line).and_then(|(indent, key, _)| {
+        if indent == child_indent {
+            Some(key)
+        } else {
+            None
+        }
+    })
+}
+
+/// Reorder each k8s block's children independently, leaving every line outside
+/// the blocks untouched.
+fn reorder_k8s(lines: &[String], order: &[String]) -> Vec<String> {
+    // Locate every present block and process them in file order so their
+    // regions never overlap.
+    let mut starts: Vec<usize> = K8S_BLOCKS
+        .iter()
+        .filter_map(|b| find_k8s_block(lines, b))
+        .collect();
+    starts.sort_unstable();
+
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    let mut cursor = 0usize;
+    for start in starts {
+        // Copy everything up to and including the block header line.
+        result.extend(lines[cursor..=start].iter().cloned());
+        let (region, child_indent) = block_region(lines, start);
+        let reordered = super::reorder::reorder_region(
+            &region,
+            |l| k8s_key_of(l, child_indent),
+            |l| indent_of(l) == child_indent,
+            |text| mapping_of(text).is_some(),
+            order,
+        );
+        result.extend(reordered);
+        cursor = start + 1 + region.len();
+    }
+    result.extend(lines[cursor..].iter().cloned());
+    result
+}
+
+/// The child lines under the block at `block_line`, plus the indentation of its
+/// direct children (the first child's indent, or `block_indent + 2` when the
+/// block is empty).
+fn block_region(lines: &[String], block_line: usize) -> (Vec<String>, usize) {
+    let block_indent = indent_of(&lines[block_line]);
+    let mut child_indent = block_indent + 2;
+    let mut end = lines.len();
+    let mut seen_child = false;
+    for (offset, line) in lines[block_line + 1..].iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = indent_of(line);
+        if indent <= block_indent {
+            end = block_line + 1 + offset;
+            break;
+        }
+        if !seen_child {
+            child_indent = indent;
+            seen_child = true;
+        }
+    }
+    (lines[block_line + 1..end].to_vec(), child_indent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +778,98 @@ mod tests {
         let comments = parse_comments(content);
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].key, "DATABASE_URL");
+    }
+
+    fn reorder(content: &str, order: &[&str]) -> String {
+        let order: Vec<String> = order.iter().map(|s| s.to_string()).collect();
+        super::reorder(content, &order)
+    }
+
+    #[test]
+    fn reorder_flat_yaml_keys() {
+        let content = "C: 3\nA: 1\nB: 2\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A: 1\nB: 2\nC: 3\n");
+    }
+
+    #[test]
+    fn reorder_flat_yaml_moves_attached_comment() {
+        let content = "# doc C\nC: 3\nB: 2\nA: 1\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A: 1\nB: 2\n# doc C\nC: 3\n");
+    }
+
+    #[test]
+    fn reorder_flat_yaml_extras_to_bottom() {
+        let content = "X: 9\nC: 3\nA: 1\nY: 8\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "A: 1\nC: 3\nX: 9\nY: 8\n");
+    }
+
+    #[test]
+    fn reorder_flat_yaml_empty_value_key_stays_in_place() {
+        // Empty-value entries are not recognized as keys, so they are pinned.
+        let content = "C: 3\nEMPTY:\nA: 1\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "A: 1\nEMPTY:\nC: 3\n");
+    }
+
+    #[test]
+    fn reorder_flat_yaml_already_in_order_is_noop() {
+        let content = "A: 1\nB: 2\n";
+        let out = reorder(content, &["A", "B"]);
+        assert_eq!(out, content);
+    }
+
+    #[test]
+    fn reorder_k8s_block_children() {
+        let content = "kind: ConfigMap\ndata:\n  C: 3\n  A: 1\n  B: 2\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "kind: ConfigMap\ndata:\n  A: 1\n  B: 2\n  C: 3\n");
+    }
+
+    #[test]
+    fn reorder_k8s_reorders_each_block_independently() {
+        let content = "kind: Secret\nstringData:\n  B: 2\n  A: 1\ndata:\n  D: 4\n  C: 3\n";
+        let out = reorder(content, &["A", "B", "C", "D"]);
+        assert_eq!(
+            out,
+            "kind: Secret\nstringData:\n  A: 1\n  B: 2\ndata:\n  C: 3\n  D: 4\n"
+        );
+    }
+
+    #[test]
+    fn reorder_k8s_children_never_cross_blocks() {
+        // The base order ranks data children after stringData children, but each
+        // block only reorders its own keys; nothing crosses into another block.
+        let content = "kind: Secret\ndata:\n  C: 3\n  A: 1\nstringData:\n  D: 4\n";
+        let out = reorder(content, &["A", "B", "C", "D"]);
+        assert_eq!(
+            out,
+            "kind: Secret\ndata:\n  A: 1\n  C: 3\nstringData:\n  D: 4\n"
+        );
+    }
+
+    #[test]
+    fn reorder_k8s_block_level_comment_stays() {
+        // The header above `data:` is outside the block region and untouched.
+        let content = "kind: ConfigMap\n# header\ndata:\n  C: 3\n  A: 1\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "kind: ConfigMap\n# header\ndata:\n  A: 1\n  C: 3\n");
+    }
+
+    #[test]
+    fn reorder_k8s_attached_comment_moves_with_child() {
+        let content = "kind: ConfigMap\ndata:\n  # doc C\n  C: 3\n  A: 1\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "kind: ConfigMap\ndata:\n  A: 1\n  # doc C\n  C: 3\n");
+    }
+
+    #[test]
+    fn reorder_k8s_blank_separator_travels_with_the_unit() {
+        // The blank after C belongs to C's unit, so it ends up after C again.
+        let content = "kind: ConfigMap\ndata:\n  C: 3\n\n  A: 1\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "kind: ConfigMap\ndata:\n  A: 1\n  C: 3\n\n");
     }
 }

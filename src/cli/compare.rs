@@ -404,6 +404,47 @@ fn free_comment_label(
     }
 }
 
+/// Build the base file's key order for `--reorder`: recognized keys in file
+/// order, first occurrence wins.
+fn base_key_order(pairs: &[ParsedPair]) -> Vec<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    for p in pairs {
+        if seen.insert(p.key.as_str()) {
+            order.push(p.key.clone());
+        }
+    }
+    order
+}
+
+/// Collect the peer targets for `--reorder`: same-kind files in the base
+/// service, excluding the base file itself and `skip_files` matches.
+fn reorder_targets(
+    service: &crate::model::Service,
+    base: &crate::model::EnvFile,
+    skip_files: &HashSet<String>,
+) -> Vec<crate::edit::Target> {
+    let peers = peer_kinds(base.kind);
+    let mut targets: Vec<crate::edit::Target> = Vec::new();
+    for file in &service.files {
+        if !peers.contains(&file.kind) {
+            continue;
+        }
+        if file.display == base.display {
+            continue;
+        }
+        // Peer files matching configured skip_files patterns are excluded.
+        if context::file_is_skipped(file, &service.path, skip_files) {
+            continue;
+        }
+        targets.push(crate::edit::Target {
+            service: service.name.clone(),
+            file: file.clone(),
+        });
+    }
+    targets
+}
+
 /// Handle `nv compare`: compare a base file against peer files.
 pub fn run(
     cli: &Cli,
@@ -411,7 +452,14 @@ pub fn run(
     compare_values: bool,
     compare_order: bool,
     compare_comments: bool,
+    reorder: bool,
 ) -> Result<()> {
+    // `--reorder` identifies the base service via `--service`; fail fast before
+    // anything is read or written.
+    if reorder && cli.services.is_empty() {
+        bail!("--reorder requires --service to identify the base file's service.");
+    }
+
     let ctx = context::resolve(cli)?;
     context::print_banner(ctx.source);
 
@@ -498,6 +546,20 @@ pub fn run(
     let base_content = fs::read_to_string(&base_file.path)
         .map_err(|e| anyhow::anyhow!("cannot read base file '{}': {}", base_file.display, e))?;
     let base_pairs = parse_pairs(&base_content, base_kind);
+
+    // `--reorder` rewrites the base service's other same-kind files so their
+    // keys follow the base file's order, then previews and applies via the
+    // standard safe-write path.
+    if reorder {
+        let order = base_key_order(&base_pairs);
+        let targets = reorder_targets(base_service, base_file, &base_skip_files);
+        let changes = crate::edit::ChangeSet::reorder(&targets, &order)?;
+        let use_color = color::should_use_color();
+        let colors = ctx.colors();
+        context::preview_and_apply(cli, &changes, &colors, use_color)?;
+        return Ok(());
+    }
+
     let base_comments = parser::parse_comments(&base_content);
     let base_attached = parser::parse_attached_comments(&base_content, base_kind);
 
@@ -1608,5 +1670,91 @@ commands:
             !tree.contains("secrets.yml"),
             "skipped secrets file must not be listed:\n{tree}"
         );
+    }
+
+    #[test]
+    fn test_base_key_order_dedupes_first_occurrence_wins() {
+        let pairs = vec![
+            pair("A", "1"),
+            pair("B", "2"),
+            pair("A", "3"),
+            pair("C", "4"),
+            pair("B", "5"),
+        ];
+        assert_eq!(base_key_order(&pairs), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_base_key_order_empty_base() {
+        assert!(base_key_order(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_reorder_targets_same_kind_peers_in_service() {
+        let root = PathBuf::from("/tmp/auth");
+        let service = crate::model::Service {
+            name: "auth".into(),
+            path: root.clone(),
+            files: vec![
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join(".env"),
+                    display: ".env".into(),
+                },
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join(".env.prod"),
+                    display: ".env.prod".into(),
+                },
+                EnvFile {
+                    kind: FileKind::DotenvExample,
+                    path: root.join(".env.example"),
+                    display: ".env.example".into(),
+                },
+                EnvFile {
+                    kind: FileKind::ConfigMap,
+                    path: root.join("configmap.yml"),
+                    display: "configmap.yml".into(),
+                },
+            ],
+        };
+        let base = EnvFile {
+            kind: FileKind::Dotenv,
+            path: root.join(".env"),
+            display: ".env".into(),
+        };
+        let targets = reorder_targets(&service, &base, &HashSet::new());
+        let displays: Vec<&str> = targets.iter().map(|t| t.file.display.as_str()).collect();
+        // Same-kind peers only, base file excluded, configmap untouched.
+        assert_eq!(displays, vec![".env.prod", ".env.example"]);
+    }
+
+    #[test]
+    fn test_reorder_targets_excludes_skip_files() {
+        let root = PathBuf::from("/tmp/auth");
+        let service = crate::model::Service {
+            name: "auth".into(),
+            path: root.clone(),
+            files: vec![
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join(".env"),
+                    display: ".env".into(),
+                },
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join("docker/.env"),
+                    display: "docker/.env".into(),
+                },
+            ],
+        };
+        let base = EnvFile {
+            kind: FileKind::Dotenv,
+            path: root.join(".env"),
+            display: ".env".into(),
+        };
+        let skip = skip_set(&["docker/.env"]);
+        let targets = reorder_targets(&service, &base, &skip);
+        assert!(targets.is_empty(), "skipped peer must be excluded");
     }
 }

@@ -200,6 +200,11 @@ pub enum Command {
         /// comment in the files.
         #[arg(long, conflicts_with_all = ["values", "order"])]
         comments: bool,
+        /// Rewrite the base service's other same-kind files so their keys
+        /// follow the base file's order. Keys the base lacks move to the
+        /// bottom. Requires --service.
+        #[arg(long, conflicts_with_all = ["values", "order", "comments"])]
+        reorder: bool,
     },
 }
 
@@ -262,7 +267,8 @@ pub fn run() -> Result<()> {
             values,
             order,
             comments,
-        }) => compare::run(&cli, file_path, *values, *order, *comments),
+            reorder,
+        }) => compare::run(&cli, file_path, *values, *order, *comments, *reorder),
         None => crate::tui::launch(&cli),
     }
 }

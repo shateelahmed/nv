@@ -166,7 +166,7 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv` | Launch the interactive TUI. |
 | `nv init` | Create/update `nv.yml` via a wizard. |
 | `nv find <query>` | Fuzzy-find a key across all services. |
-| `nv compare <file-path>` | Compare a file against other files of the same kind. |
+| `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
 | `nv gen <KEY>` | Generate a secret and set it on a key. |
 
@@ -214,6 +214,13 @@ nv compare .env.example --order
 
 # Compare each key's attached comment, then every other comment in the files
 nv compare .env.example --comments
+
+# Rewrite the auth service's other same-kind files so their keys follow
+# .env's order; keys the base lacks move to the bottom. Requires --service.
+nv compare .env --reorder --service auth
+
+# Preview the reorder without writing
+nv compare --reorder --dry-run .env --service auth
 
 # Preview a change without writing
 nv --dry-run set FEATURE_FLAG on

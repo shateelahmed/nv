@@ -11,6 +11,7 @@
 
 // These make `src/parser/dotenv.rs` and `src/parser/yaml.rs` part of this module.
 pub mod dotenv;
+pub mod reorder;
 pub mod yaml;
 
 use std::path::Path;
@@ -188,6 +189,21 @@ pub fn remove_key(content: &str, kind: FileKind, key: &str) -> String {
         yaml::remove_key(content, key)
     } else {
         dotenv::remove_key(content, key)
+    }
+}
+
+/// Return file `content` with its keys reordered to follow `order` (the target
+/// key order, typically taken from another file).
+///
+/// Keys absent from `order` move to the bottom, keeping their relative order.
+/// Each key travels with its attached comment block and trailing blank lines;
+/// every other line stays exactly where it is. Delegates to the YAML or dotenv
+/// editor depending on the file kind.
+pub fn reorder(content: &str, kind: FileKind, order: &[String]) -> String {
+    if kind.is_yaml() {
+        yaml::reorder(content, order)
+    } else {
+        dotenv::reorder(content, order)
     }
 }
 

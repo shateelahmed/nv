@@ -120,6 +120,32 @@ impl ChangeSet {
         Ok(ChangeSet { changes })
     }
 
+    /// Build a change set that reorders each target's keys to follow `order`,
+    /// using the target's own file kind to pick the reorder strategy. Targets
+    /// whose content cannot be read are skipped silently; targets already in
+    /// the target order become no-op changes (dropped by `effective()`).
+    pub fn reorder(targets: &[Target], order: &[String]) -> Result<ChangeSet> {
+        let mut changes = Vec::new();
+        for target in targets {
+            let old_content = match read_or_empty(&target.file.path) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            let new_content = parser::reorder(&old_content, target.file.kind, order);
+            changes.push(FileChange {
+                service: target.service.clone(),
+                display: target.file.display.clone(),
+                path: target.file.path.clone(),
+                kind: target.file.kind,
+                key: String::new(),
+                value: String::new(),
+                old_content,
+                new_content,
+            });
+        }
+        Ok(ChangeSet { changes })
+    }
+
     /// Changes that actually modify a file.
     pub fn effective(&self) -> impl Iterator<Item = &FileChange> {
         self.changes.iter().filter(|c| !c.is_noop())

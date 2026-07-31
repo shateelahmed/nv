@@ -226,6 +226,32 @@ fn rewrite_line(line: &str, value: &str) -> String {
     format!("{indent}{prefix}{key}={}", quote_if_needed(value))
 }
 
+/// Return `content` with its assignments reordered to follow `order`.
+///
+/// Keys absent from `order` are moved to the bottom, keeping their relative
+/// order. Each key travels with its attached comment block and trailing blank
+/// lines; every other line (un-attached comments, commented-out assignments,
+/// blank lines) stays exactly where it is. Values are never rewritten.
+pub fn reorder(content: &str, order: &[String]) -> String {
+    let newline = crate::parser::detect_newline(content);
+    let ends_with_newline = content.ends_with('\n');
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    lines = super::reorder::reorder_region(
+        &lines,
+        |l| parse_line(l).map(|(k, _)| k),
+        |_| true,
+        |text| parse_line(text).is_some(),
+        order,
+    );
+
+    let mut out = lines.join(newline);
+    if !content.is_empty() && ends_with_newline {
+        out.push_str(newline);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +450,86 @@ mod tests {
         let comments = parse_comments(content);
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].comment, "Redis settings");
+    }
+
+    fn reorder(content: &str, order: &[&str]) -> String {
+        let order: Vec<String> = order.iter().map(|s| s.to_string()).collect();
+        super::reorder(content, &order)
+    }
+
+    #[test]
+    fn reorder_keys_to_match_base_order() {
+        let content = "C=3\nA=1\nB=2\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A=1\nB=2\nC=3\n");
+    }
+
+    #[test]
+    fn reorder_moves_extras_to_bottom_keeping_relative_order() {
+        let content = "X=9\nC=3\nA=1\nB=2\nY=8\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A=1\nB=2\nC=3\nX=9\nY=8\n");
+    }
+
+    #[test]
+    fn reorder_moves_attached_comment_with_key() {
+        let content = "# doc C\nC=3\nB=2\nA=1\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A=1\nB=2\n# doc C\nC=3\n");
+    }
+
+    #[test]
+    fn reorder_keeps_blank_separated_header_in_place() {
+        let content = "# header\n\nC=3\n\nA=1\n";
+        let out = reorder(content, &["A", "C"]);
+        assert_eq!(out, "# header\n\nA=1\nC=3\n\n");
+    }
+
+    #[test]
+    fn reorder_pins_commented_out_assignment_and_breaks_block() {
+        let content = "# doc B\n# KEY=old\nB=2\nA=1\n";
+        let out = reorder(content, &["A", "B"]);
+        assert_eq!(out, "# doc B\n# KEY=old\nA=1\nB=2\n");
+    }
+
+    #[test]
+    fn reorder_already_in_order_is_noop() {
+        let content = "A=1\nB=2\nC=3\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, content);
+    }
+
+    #[test]
+    fn reorder_preserves_crlf() {
+        let content = "C=3\r\nA=1\r\nB=2\r\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A=1\r\nB=2\r\nC=3\r\n");
+    }
+
+    #[test]
+    fn reorder_preserves_trailing_newline_state() {
+        let out = reorder("C=3\nA=1", &["A", "C"]);
+        assert_eq!(out, "A=1\nC=3");
+        let out = reorder("C=3\nA=1\n", &["A", "C"]);
+        assert_eq!(out, "A=1\nC=3\n");
+    }
+
+    #[test]
+    fn reorder_empty_content_stays_empty() {
+        assert_eq!(reorder("", &["A"]), "");
+    }
+
+    #[test]
+    fn reorder_preserves_inline_comments_and_export() {
+        let content = "C=3 # inline\nB=2\nexport A=1\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "export A=1\nB=2\nC=3 # inline\n");
+    }
+
+    #[test]
+    fn reorder_duplicate_keys_use_first_occurrence() {
+        let content = "C=1\nA=2\nB=3\nB=4\n";
+        let out = reorder(content, &["A", "B", "C"]);
+        assert_eq!(out, "A=2\nB=3\nB=4\nC=1\n");
     }
 }
