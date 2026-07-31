@@ -167,6 +167,7 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             &service_filter,
             None,
             None,
+            &ctx.config,
             &ctx.colors(),
             color::should_use_color(),
         );
@@ -206,6 +207,7 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             &service_filter,
             Some(base_kind),
             Some(file_path),
+            &ctx.config,
             &ctx.colors(),
             color::should_use_color(),
         );
@@ -289,12 +291,14 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
 /// `service_filter` is non-empty, only those services' files are included.
 /// When `kind_filter` is set, only files of that kind are listed. When
 /// `exclude_path` is set, files with that display path are omitted (the
-/// requested file is not "available").
+/// requested file is not "available"). Files matching a service's merged
+/// `compare.skip_files` are omitted too, since they cannot be compared.
 fn available_files_tree(
     services: &[crate::model::Service],
     service_filter: &[&str],
     kind_filter: Option<FileKind>,
     exclude_path: Option<&str>,
+    config: &Option<crate::config::Config>,
     colors: &ColorConfig,
     use_color: bool,
 ) -> String {
@@ -302,11 +306,15 @@ fn available_files_tree(
         .iter()
         .filter(|s| service_filter.is_empty() || service_filter.iter().any(|n| n == &s.name))
         .filter_map(|s| {
+            let skip_files = context::build_skip_files(config, &s.name, |cfg, svc| {
+                cfg.compare_skip_files_for(svc)
+            });
             let files: Vec<TreeFile> = s
                 .files
                 .iter()
                 .filter(|f| kind_filter.is_none_or(|k| f.kind == k))
                 .filter(|f| exclude_path.is_none_or(|p| f.display != p))
+                .filter(|f| !context::file_is_skipped(f, &s.path, &skip_files))
                 .map(|f| TreeFile {
                     name: f.display.clone(),
                     count: 0,
@@ -437,8 +445,9 @@ fn print_comparisons(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::path::PathBuf;
 
-    use crate::model::FileKind;
+    use crate::model::{EnvFile, FileKind};
 
     #[test]
     fn test_peer_kinds_dotenv() {
@@ -695,5 +704,102 @@ mod tests {
     fn test_build_skip_files_empty_without_config() {
         let skip = context::build_skip_files(&None, "auth", |_, _| Vec::new());
         assert!(skip.is_empty());
+    }
+
+    #[test]
+    fn test_available_files_tree_omits_skipped_files() {
+        let config: crate::config::Config = serde_yaml::from_str(
+            r#"
+services_root: .
+commands:
+  compare:
+    skip_files:
+      - docker/.env
+"#,
+        )
+        .unwrap();
+
+        let root = PathBuf::from("/tmp/auth");
+        let service = crate::model::Service {
+            name: "auth".into(),
+            path: root.clone(),
+            files: vec![
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join(".env"),
+                    display: ".env".into(),
+                },
+                EnvFile {
+                    kind: FileKind::Dotenv,
+                    path: root.join("docker/.env"),
+                    display: "docker/.env".into(),
+                },
+            ],
+        };
+
+        let tree = available_files_tree(
+            &[service],
+            &[],
+            None,
+            None,
+            &Some(config),
+            &ColorConfig::default(),
+            false,
+        );
+        assert!(tree.contains("── .env"), "expected .env listed:\n{tree}");
+        assert!(
+            !tree.contains("docker/.env"),
+            "skipped file must not be listed:\n{tree}"
+        );
+    }
+
+    #[test]
+    fn test_available_files_tree_kind_filter_respects_skip_files() {
+        let config: crate::config::Config = serde_yaml::from_str(
+            r#"
+services_root: .
+commands:
+  compare:
+    skip_files:
+      - deploy/secrets.yml
+"#,
+        )
+        .unwrap();
+
+        let root = PathBuf::from("/tmp/billing");
+        let service = crate::model::Service {
+            name: "billing".into(),
+            path: root.clone(),
+            files: vec![
+                EnvFile {
+                    kind: FileKind::ConfigMap,
+                    path: root.join("deploy/configmap.yml"),
+                    display: "deploy/configmap.yml".into(),
+                },
+                EnvFile {
+                    kind: FileKind::Secret,
+                    path: root.join("deploy/secrets.yml"),
+                    display: "deploy/secrets.yml".into(),
+                },
+            ],
+        };
+
+        let tree = available_files_tree(
+            &[service],
+            &[],
+            Some(FileKind::ConfigMap),
+            None,
+            &Some(config),
+            &ColorConfig::default(),
+            false,
+        );
+        assert!(
+            tree.contains("deploy/configmap.yml"),
+            "expected configmap listed:\n{tree}"
+        );
+        assert!(
+            !tree.contains("secrets.yml"),
+            "skipped secrets file must not be listed:\n{tree}"
+        );
     }
 }

@@ -149,6 +149,9 @@ services:
   errors explicitly instead of comparing (never silently ignored) — only peer
   (compared) files are silently filtered.
 - `skip_files` has no built-in defaults.
+- Files matching a service's merged `skip_files` set MUST also be omitted from
+  the `Available ... files:` error listings (they cannot be compared, so they
+  are not "available").
 
 **Requested base file is excluded:** If the file the user asks to compare is
 itself listed under `skip_files`, the command MUST error with
@@ -198,6 +201,9 @@ omitted.
       and lists available files of the same kind (excluding the requested
       file), with a header naming the kind (`Available env files:`,
       `Available configmap files:`, `Available secrets files:`).
+- [ ] Given a service with `compare.skip_files: [docker/.env]`, when the
+      available-files tree is shown (file not found or base excluded), the
+      `docker/.env` file is NOT listed.
 
 ## Edge cases
 
@@ -209,7 +215,8 @@ omitted.
   disambiguation hint.
 - No other files of the same kind → "No comparisons found."
 - Binary or unreadable compared files → silently skipped.
-- Files matching a `compare.skip_files` pattern → excluded from comparison.
+- Files matching a `compare.skip_files` pattern → excluded from comparison
+  and omitted from the `Available ... files:` error listings.
 - Requested base file itself listed under `compare.skip_files` → error
   `file '<path>' is excluded by compare.skip_files.` plus an
   `Available <kind> files:` tree of same-kind files (requested file omitted),

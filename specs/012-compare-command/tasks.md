@@ -99,6 +99,17 @@
   - Verify: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`,
     manual smoke test.
 
+- [x] **T12: Omit `skip_files` matches from the error's available-files tree**
+  - File: `src/cli/compare.rs`
+  - `available_files_tree` now takes `&Option<Config>` and drops files that
+    match their service's merged `compare.skip_files` set (they cannot be
+    compared, so they are not "available"). Applies to both the
+    not-found and the skipped-base error listings.
+  - Add unit tests: skipped file omitted from the tree; kind-filtered tree
+    still respects per-service skip patterns.
+  - Verify: `cargo build`, `cargo test` (140), `cargo clippy`, `cargo fmt`,
+    manual smoke test of both error paths.
+
 ## Verification
 
 ```sh
