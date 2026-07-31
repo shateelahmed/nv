@@ -4,17 +4,19 @@
 //! (`nv.yml` or the command line), then load the list of services. This module
 //! does that once and hands back a [`Context`] the command can use.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Result, bail};
+use glob::Pattern;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use super::Cli;
 use crate::color::ColorConfig;
 use crate::config::{self, CONFIG_FILE, Config};
 use crate::discovery;
-use crate::model::{ConfigSource, FileKind, Service};
+use crate::model::{ConfigSource, EnvFile, FileKind, Service};
 
 /// The resolved context for a command invocation.
 pub struct Context {
@@ -195,6 +197,46 @@ pub fn mark_false_alarm(pairs: &[(&str, &str)]) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Check if a file path matches any skip_files pattern.
+///
+/// Supports glob patterns: `*` matches any characters except `/`, `**` matches
+/// any characters including `/` (recursive). Matches are tried against both the
+/// relative path from the service root and the bare file name.
+pub fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<String>) -> bool {
+    for pattern in skip_files {
+        if let Ok(glob_pattern) = Pattern::new(pattern)
+            && (glob_pattern.matches(relative_str) || glob_pattern.matches(name))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether an env file matches a service's merged skip_files set.
+pub fn file_is_skipped(file: &EnvFile, service_root: &Path, skip_files: &HashSet<String>) -> bool {
+    let relative = file.path.strip_prefix(service_root).unwrap_or(&file.path);
+    let relative_str = relative.to_str().unwrap_or("");
+    let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    matches_skip_pattern(relative_str, name, skip_files)
+}
+
+/// Build the merged set of files to skip for a service from an accessor that
+/// returns a command's global + per-service `skip_files` list.
+pub fn build_skip_files<'a>(
+    config: &'a Option<Config>,
+    service: &'a str,
+    accessor: impl Fn(&'a Config, &'a str) -> Vec<&'a str>,
+) -> HashSet<String> {
+    let mut skip: HashSet<String> = HashSet::new();
+    if let Some(cfg) = config {
+        for file in accessor(cfg, service) {
+            skip.insert(file.to_string());
+        }
+    }
+    skip
 }
 
 /// A shared progress tracker for commands that scan files.

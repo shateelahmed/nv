@@ -1,14 +1,12 @@
 //! `nv compare` — compare an env file against other files of the same kind.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 
 use anyhow::{Result, bail};
-use glob::Pattern;
 
 use super::{Cli, context};
 use crate::color::{self, AnsiColor, ColorConfig};
-use crate::config;
 use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::model::FileKind;
 use crate::parser;
@@ -72,46 +70,6 @@ fn to_map(pairs: &[ParsedPair]) -> BTreeMap<&str, &str> {
         .iter()
         .map(|p| (p.key.as_str(), p.value.as_str()))
         .collect()
-}
-
-/// Check if a file path matches any skip_files pattern.
-///
-/// Supports glob patterns: `*` matches any characters except `/`, `**` matches
-/// any characters including `/` (recursive). Matches are tried against both the
-/// relative path from the service root and the bare file name.
-fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<String>) -> bool {
-    for pattern in skip_files {
-        if let Ok(glob_pattern) = Pattern::new(pattern)
-            && (glob_pattern.matches(relative_str) || glob_pattern.matches(name))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// Whether an env file matches a service's merged skip_files set.
-fn file_is_skipped(
-    file: &crate::model::EnvFile,
-    service: &crate::model::Service,
-    skip_files: &HashSet<String>,
-) -> bool {
-    let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
-    let relative_str = relative.to_str().unwrap_or("");
-    let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    matches_skip_pattern(relative_str, name, skip_files)
-}
-
-/// Build the merged set of files to skip for a service — global
-/// `commands.compare.skip_files` plus per-service entries.
-fn build_skip_files(config: &Option<config::Config>, service: &str) -> HashSet<String> {
-    let mut skip: HashSet<String> = HashSet::new();
-    if let Some(cfg) = config {
-        for file in cfg.compare_skip_files_for(service) {
-            skip.insert(file.to_string());
-        }
-    }
-    skip
 }
 
 /// Compute the diff between base pairs and peer pairs.
@@ -239,8 +197,10 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
 
     // A base file listed under compare.skip_files cannot be compared. Show an
     // error with the reason and list available files of the same kind.
-    let base_skip_files = build_skip_files(&ctx.config, &base_service.name);
-    if file_is_skipped(base_file, base_service, &base_skip_files) {
+    let base_skip_files = context::build_skip_files(&ctx.config, &base_service.name, |cfg, svc| {
+        cfg.compare_skip_files_for(svc)
+    });
+    if context::file_is_skipped(base_file, &base_service.path, &base_skip_files) {
         let tree = available_files_tree(
             &ctx.services,
             &service_filter,
@@ -273,7 +233,9 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             continue;
         }
 
-        let skip_files = build_skip_files(&ctx.config, &service.name);
+        let skip_files = context::build_skip_files(&ctx.config, &service.name, |cfg, svc| {
+            cfg.compare_skip_files_for(svc)
+        });
 
         for file in &service.files {
             if !peer_kinds.contains(&file.kind) {
@@ -284,7 +246,7 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             }
 
             // Skip peer files matching configured skip_files patterns.
-            if file_is_skipped(file, service, &skip_files) {
+            if context::file_is_skipped(file, &service.path, &skip_files) {
                 continue;
             }
 
@@ -474,6 +436,8 @@ fn print_comparisons(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::model::FileKind;
 
     #[test]
@@ -665,8 +629,8 @@ mod tests {
     #[test]
     fn test_matches_skip_pattern_exact_relative_path() {
         let skip = skip_set(&["docker/.env"]);
-        assert!(matches_skip_pattern("docker/.env", ".env", &skip));
-        assert!(!matches_skip_pattern(
+        assert!(context::matches_skip_pattern("docker/.env", ".env", &skip));
+        assert!(!context::matches_skip_pattern(
             "docker/.env.example",
             ".env.example",
             &skip
@@ -677,12 +641,12 @@ mod tests {
     fn test_matches_skip_pattern_file_name() {
         let skip = skip_set(&["custom.env"]);
         // A bare name matches any sub-path ending in that file name.
-        assert!(matches_skip_pattern(
+        assert!(context::matches_skip_pattern(
             "docker/custom.env",
             "custom.env",
             &skip
         ));
-        assert!(!matches_skip_pattern(
+        assert!(!context::matches_skip_pattern(
             "docker/other.env",
             "other.env",
             &skip
@@ -692,36 +656,44 @@ mod tests {
     #[test]
     fn test_matches_skip_pattern_glob_double_star() {
         let skip = skip_set(&["docker/**/*.env*"]);
-        assert!(matches_skip_pattern(
+        assert!(context::matches_skip_pattern(
             "docker/app/.env.example",
             ".env.example",
             &skip
         ));
-        assert!(matches_skip_pattern("docker/.env", ".env", &skip));
-        assert!(!matches_skip_pattern("billing/.env", ".env", &skip));
+        assert!(context::matches_skip_pattern("docker/.env", ".env", &skip));
+        assert!(!context::matches_skip_pattern(
+            "billing/.env",
+            ".env",
+            &skip
+        ));
     }
 
     #[test]
     fn test_matches_skip_pattern_single_glob() {
         let skip = skip_set(&["*.test.env"]);
-        assert!(matches_skip_pattern(
+        assert!(context::matches_skip_pattern(
             "auth.test.env",
             "auth.test.env",
             &skip
         ));
         // The bare-name match also covers nested paths with the same file name.
-        assert!(matches_skip_pattern(
+        assert!(context::matches_skip_pattern(
             "docker/auth.test.env",
             "auth.test.env",
             &skip
         ));
         // But not a different file name.
-        assert!(!matches_skip_pattern("docker/app.env", "app.env", &skip));
+        assert!(!context::matches_skip_pattern(
+            "docker/app.env",
+            "app.env",
+            &skip
+        ));
     }
 
     #[test]
     fn test_build_skip_files_empty_without_config() {
-        let skip = build_skip_files(&None, "auth");
+        let skip = context::build_skip_files(&None, "auth", |_, _| Vec::new());
         assert!(skip.is_empty());
     }
 }

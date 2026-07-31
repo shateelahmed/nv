@@ -10,7 +10,8 @@
 `nv find <query>` fuzzy-searches environment-variable keys across services and
 prints matches in a hierarchical, colorized tree. The command predates the
 spec-driven workflow; this spec retroactively documents it, including the
-`-s`/`--service` scoping and the removal of the color legend.
+`-s`/`--service` scoping, the removal of the color legend, and the
+`commands.find.skip_files` configuration.
 
 ## Problem / Motivation
 
@@ -24,6 +25,7 @@ spec-driven workflow; this spec retroactively documents it, including the
 
 - Fuzzy-match a query against service names, key names, and file paths.
 - Scope the search to one or more named services via `-s`/`--service`.
+- Exclude files from the search via `commands.find.skip_files` (glob patterns).
 - Print results in the uniform hierarchical tree format with no legend.
 
 ## Non-goals
@@ -41,6 +43,8 @@ spec-driven workflow; this spec retroactively documents it, including the
   service, so results from unrelated services don't clutter the output.
 - As a developer, I want uncluttered output without a legend, so the results
   start immediately.
+- As a developer, I want to exclude noisy files (e.g. example templates or
+  generated envs) from search results, so I only see keys that matter.
 
 ## Behavior & requirements
 
@@ -101,6 +105,45 @@ service_name/
 - When there are no matches in scope, the command MUST print `No matches.` to
   stderr and exit successfully.
 
+### Configuration
+
+Files to exclude from search can be configured globally or per-service in
+`nv.yml`.
+
+**Global configuration** (applies to all services):
+```yaml
+commands:
+  find:
+    skip_files:
+      - docker/.env
+      - "*.example.env"
+```
+
+**Per-service configuration** (applies only to that service):
+```yaml
+services:
+  auth:
+    path: services/auth
+    commands:
+      find:
+        skip_files:
+          - .env.testing.example
+          - docker/**/*.env*
+```
+
+- Global and per-service `skip_files` MUST be merged when searching within a
+  service.
+- `skip_files` entries support glob patterns:
+  - `*` matches any characters except `/` (within a single path segment)
+  - `**` matches any characters including `/` (recursive across directories)
+  - `?` matches a single character
+- `skip_files` entries are matched against the relative path from the service
+  root directory (e.g., `docker/.env`, `docker/app/.env.example`).
+- `skip_files` entries can also match just the file name (e.g., `custom.env`).
+- Files matching a `skip_files` pattern MUST be excluded from the search index
+  entirely, so no key from a skipped file is searchable.
+- `skip_files` has no built-in defaults.
+
 ## Acceptance criteria
 
 - [ ] Given a query `db` and no `-s`, `nv find db` lists matching keys grouped
@@ -114,12 +157,24 @@ service_name/
 - [ ] Given an empty query, `nv find` lists every key in scope.
 - [ ] Given a service name in `-s` that does not exist, the command runs
       without error and prints `No matches.` (empty scope).
+- [ ] Given global `commands.find.skip_files: [docker/.env]` and a service
+      with a key in `docker/.env`, `nv find <key>` does not return that key,
+      while keys in the service's other files still match.
+- [ ] Given per-service
+      `services.billing.commands.find.skip_files: [.env]`, `nv find
+      <billing-only-key>` returns `No matches.` while `nv find` still lists
+      auth's keys.
+- [ ] Given `commands.find.skip_files: [custom.env]` where `custom.env` is a
+      sub-path (e.g., `docker/custom.env`), `nv find` excludes it by its file
+      name alone.
 
 ## Edge cases
 
 - No `-s` → all services are searched.
 - Empty query → every key in scope is listed.
 - Filter names matching no service → empty scope, `No matches.`.
+- Files matching a `commands.find.skip_files` pattern → their keys are
+  entirely absent from the index (unsearchable).
 - Unreadable files → skipped silently by the index builder.
 - No matches → `No matches.` on stderr, exit code 0.
 - Colors disabled (piped output or `--no-color`) → tree lines without ANSI

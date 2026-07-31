@@ -18,7 +18,7 @@ pub fn run(cli: &Cli, query: &str) -> Result<()> {
 
     // `--service`/`-s` scopes the search to the named services.
     let service_filter = ctx.service_filter(cli);
-    let services: Vec<Service> = if service_filter.is_empty() {
+    let mut services: Vec<Service> = if service_filter.is_empty() {
         ctx.services.clone()
     } else {
         ctx.services
@@ -27,6 +27,19 @@ pub fn run(cli: &Cli, query: &str) -> Result<()> {
             .cloned()
             .collect()
     };
+
+    // `commands.find.skip_files` (global + per-service) excludes files from
+    // the search index.
+    for service in &mut services {
+        let skip_files = context::build_skip_files(&ctx.config, &service.name, |cfg, svc| {
+            cfg.find_skip_files_for(svc)
+        });
+        if !skip_files.is_empty() {
+            service
+                .files
+                .retain(|f| !context::file_is_skipped(f, &service.path, &skip_files));
+        }
+    }
 
     let index = search::build_index(&services);
     let results = search::search(&index, query);

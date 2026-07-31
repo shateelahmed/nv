@@ -140,6 +140,15 @@ pub struct CompareConfig {
     pub skip_files: Vec<String>,
 }
 
+/// Configuration for the `nv find` command.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FindConfig {
+    /// Files to exclude from search, relative to the service root or by
+    /// file name. Glob patterns are supported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_files: Vec<String>,
+}
+
 /// Global command-specific configuration, nested under `commands:` in nv.yml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommandsConfig {
@@ -152,6 +161,9 @@ pub struct CommandsConfig {
     /// Configuration for the `nv compare` command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compare: Option<CompareConfig>,
+    /// Configuration for the `nv find` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub find: Option<FindConfig>,
 }
 
 /// The `nv.yml` document — the top-level shape of the whole config file.
@@ -278,6 +290,33 @@ impl Config {
             .and_then(|svc| svc.commands.as_ref())
             .and_then(|cmd| cmd.compare.as_ref())
             .map(|compare| compare.skip_files.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        let mut merged: Vec<&str> = global;
+        for file in per_svc {
+            if !merged.contains(&file) {
+                merged.push(file);
+            }
+        }
+        merged
+    }
+
+    /// Return the merged list of files to skip for `nv find` for a service —
+    /// global list plus per-service list, deduplicated.
+    pub fn find_skip_files_for(&self, service: &str) -> Vec<&str> {
+        let global: Vec<&str> = self
+            .commands
+            .as_ref()
+            .and_then(|cmd| cmd.find.as_ref())
+            .map(|find| find.skip_files.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        let per_svc: Vec<&str> = self
+            .services
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.find.as_ref())
+            .map(|find| find.skip_files.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default();
 
         let mut merged: Vec<&str> = global;
@@ -552,6 +591,72 @@ services:
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let files = config.compare_skip_files_for("auth");
+        assert_eq!(files, vec!["docker/.env", ".env.testing.example"]);
+    }
+
+    #[test]
+    fn find_skip_files_empty_when_not_configured() {
+        let yaml = r#"
+services_root: .
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let files: Vec<&str> = config.find_skip_files_for("any");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn find_skip_files_global_only() {
+        let yaml = r#"
+services_root: .
+commands:
+  find:
+    skip_files:
+      - docker/.env
+      - "*.test.env"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let files = config.find_skip_files_for("any-service");
+        assert_eq!(files, vec!["docker/.env", "*.test.env"]);
+    }
+
+    #[test]
+    fn find_skip_files_per_service_only() {
+        let yaml = r#"
+services_root: .
+services:
+  auth:
+    commands:
+      find:
+        skip_files:
+          - .env.testing.example
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.find_skip_files_for("auth"),
+            vec![".env.testing.example"]
+        );
+        // Other services get nothing.
+        let other: Vec<&str> = config.find_skip_files_for("other");
+        assert!(other.is_empty());
+    }
+
+    #[test]
+    fn find_skip_files_global_and_per_service_merge() {
+        let yaml = r#"
+services_root: .
+commands:
+  find:
+    skip_files:
+      - docker/.env
+services:
+  auth:
+    commands:
+      find:
+        skip_files:
+          - .env.testing.example
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let files = config.find_skip_files_for("auth");
         assert_eq!(files, vec!["docker/.env", ".env.testing.example"]);
     }
 
