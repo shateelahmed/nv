@@ -209,6 +209,9 @@ nv compare .env.example
 # Show value differences too
 nv compare .env.example --values
 
+# Also flag keys that appear in a different order
+nv compare .env.example --order
+
 # Preview a change without writing
 nv --dry-run set FEATURE_FLAG on
 

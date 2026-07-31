@@ -1,6 +1,6 @@
 //! `nv compare` — compare an env file against other files of the same kind.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 
 use anyhow::{Result, bail};
@@ -30,6 +30,13 @@ enum DiffItem {
         key: String,
         base_value: String,
         peer_value: String,
+    },
+    /// Key in both but at a different position (only with --order). Positions
+    /// are 1-based line indexes in each file.
+    OutOfOrder {
+        key: String,
+        base_pos: usize,
+        peer_pos: usize,
     },
 }
 
@@ -112,6 +119,44 @@ fn diff_pairs(base: &[ParsedPair], peer: &[ParsedPair], compare_values: bool) ->
     items
 }
 
+/// Compute the order diff between base pairs and peer pairs.
+///
+/// Only keys present in BOTH files participate. Walking the peer's common keys
+/// in file order, a key is reported when its base position is smaller than the
+/// largest base position seen so far — i.e. it appears "too early" relative to
+/// the base file's ordering. Each key is reported at most once.
+fn order_diffs(base: &[ParsedPair], peer: &[ParsedPair]) -> Vec<DiffItem> {
+    // Base position (0-based) of the first occurrence of each key.
+    let mut base_pos: BTreeMap<&str, usize> = BTreeMap::new();
+    for (i, p) in base.iter().enumerate() {
+        base_pos.entry(p.key.as_str()).or_insert(i);
+    }
+    if base_pos.is_empty() {
+        return Vec::new();
+    }
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut max_base = 0usize;
+    let mut items: Vec<DiffItem> = Vec::new();
+    for (peer_i, p) in peer.iter().enumerate() {
+        let Some(&b) = base_pos.get(p.key.as_str()) else {
+            continue; // key absent from the base file — not an order issue
+        };
+        if !seen.insert(p.key.as_str()) {
+            continue; // duplicate key — only the first occurrence counts
+        }
+        if b < max_base {
+            items.push(DiffItem::OutOfOrder {
+                key: p.key.clone(),
+                base_pos: b + 1,
+                peer_pos: peer_i + 1,
+            });
+        }
+        max_base = max_base.max(b);
+    }
+    items
+}
+
 /// Build the ANSI-colored label for a diff line.
 ///
 /// `prefix` is `-` or `+`, `color` is the prefix' color, `key` and `value` are
@@ -138,8 +183,28 @@ fn diff_label(
     }
 }
 
+/// Build the ANSI-colored label for an order-diff line (`- KEY (#N)`).
+fn order_label(
+    prefix: &str,
+    key: &str,
+    position: usize,
+    prefix_color: AnsiColor,
+    use_color: bool,
+) -> String {
+    if use_color {
+        format!(
+            "{} {} (#{})",
+            color::colorize(prefix, prefix_color, use_color),
+            key,
+            position,
+        )
+    } else {
+        format!("{} {} (#{})", prefix, key, position)
+    }
+}
+
 /// Handle `nv compare`: compare a base file against peer files.
-pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
+pub fn run(cli: &Cli, file_path: &str, compare_values: bool, compare_order: bool) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(ctx.source);
 
@@ -257,7 +322,10 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
                 Err(_) => continue,
             };
             let peer_pairs = parse_pairs(&content, file.kind);
-            let diffs = diff_pairs(&base_pairs, &peer_pairs, compare_values);
+            let mut diffs = diff_pairs(&base_pairs, &peer_pairs, compare_values);
+            if compare_order {
+                diffs.extend(order_diffs(&base_pairs, &peer_pairs));
+            }
 
             if diffs.is_empty() {
                 continue;
@@ -411,6 +479,34 @@ fn print_comparisons(
                                         peer_value,
                                         colors.added,
                                         colors,
+                                        use_color,
+                                    ),
+                                    color: colors.added,
+                                });
+                            }
+                            DiffItem::OutOfOrder {
+                                key,
+                                base_pos,
+                                peer_pos,
+                            } => {
+                                // Base side first (`-`), peer side (`+`), mirroring
+                                // the value-diff pair format.
+                                items.push(TreeItem {
+                                    label: order_label(
+                                        "-",
+                                        key,
+                                        *base_pos,
+                                        colors.removed,
+                                        use_color,
+                                    ),
+                                    color: colors.removed,
+                                });
+                                items.push(TreeItem {
+                                    label: order_label(
+                                        "+",
+                                        key,
+                                        *peer_pos,
+                                        colors.added,
                                         use_color,
                                     ),
                                     color: colors.added,
@@ -629,6 +725,120 @@ mod tests {
         assert!(label.contains("K = "));
         assert!(label.contains("v"));
         assert!(label.ends_with("\x1b[0m"));
+    }
+
+    fn pair(key: &str, value: &str) -> ParsedPair {
+        ParsedPair {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn test_order_diffs_same_order_is_empty() {
+        let base = vec![pair("A", "1"), pair("B", "2"), pair("C", "3")];
+        let peer = vec![pair("A", "1"), pair("B", "2"), pair("C", "3")];
+        assert!(order_diffs(&base, &peer).is_empty());
+    }
+
+    #[test]
+    fn test_order_diffs_swapped_pair() {
+        // A B C D vs A C B D: B regresses (base #2, peer #3).
+        let base = vec![
+            pair("A", "1"),
+            pair("B", "2"),
+            pair("C", "3"),
+            pair("D", "4"),
+        ];
+        let peer = vec![
+            pair("A", "1"),
+            pair("C", "3"),
+            pair("B", "2"),
+            pair("D", "4"),
+        ];
+        let diffs = order_diffs(&base, &peer);
+        assert_eq!(diffs.len(), 1);
+        match &diffs[0] {
+            DiffItem::OutOfOrder {
+                key,
+                base_pos,
+                peer_pos,
+            } => {
+                assert_eq!(key, "B");
+                assert_eq!(*base_pos, 2);
+                assert_eq!(*peer_pos, 3);
+            }
+            other => panic!("expected OutOfOrder, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_order_diffs_reversed() {
+        // Fully reversed: every key after the first regresses.
+        let base = vec![pair("A", "1"), pair("B", "2"), pair("C", "3")];
+        let peer = vec![pair("C", "3"), pair("B", "2"), pair("A", "1")];
+        let diffs = order_diffs(&base, &peer);
+        let keys: Vec<&str> = diffs
+            .iter()
+            .map(|d| match d {
+                DiffItem::OutOfOrder { key, .. } => key.as_str(),
+                other => panic!("expected OutOfOrder, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(keys, vec!["B", "A"]);
+    }
+
+    #[test]
+    fn test_order_diffs_ignores_missing_and_extra_keys() {
+        // X is not in the base, Z is not in the peer — neither affects order.
+        let base = vec![pair("A", "1"), pair("B", "2"), pair("Z", "9")];
+        let peer = vec![pair("B", "2"), pair("X", "8"), pair("A", "1")];
+        let diffs = order_diffs(&base, &peer);
+        let keys: Vec<&str> = diffs
+            .iter()
+            .map(|d| match d {
+                DiffItem::OutOfOrder { key, .. } => key.as_str(),
+                other => panic!("expected OutOfOrder, got {other:?}"),
+            })
+            .collect();
+        // B precedes A in the peer but not in the base → only A is reported.
+        assert_eq!(keys, vec!["A"]);
+    }
+
+    #[test]
+    fn test_order_diffs_duplicate_keys_use_first_occurrence() {
+        let base = vec![pair("A", "1"), pair("B", "2"), pair("C", "3")];
+        // B appears twice in the peer; the duplicate must not be re-reported.
+        let peer = vec![
+            pair("C", "3"),
+            pair("B", "2"),
+            pair("B", "4"),
+            pair("A", "1"),
+        ];
+        let diffs = order_diffs(&base, &peer);
+        let keys: Vec<&str> = diffs
+            .iter()
+            .map(|d| match d {
+                DiffItem::OutOfOrder { key, .. } => key.as_str(),
+                other => panic!("expected OutOfOrder, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(keys, vec!["B", "A"]);
+    }
+
+    #[test]
+    fn test_order_label_no_color() {
+        let label = order_label("-", "MY_KEY", 3, ColorConfig::default().removed, false);
+        assert_eq!(label, "- MY_KEY (#3)");
+    }
+
+    #[test]
+    fn test_order_label_with_color() {
+        let label = order_label("+", "MY_KEY", 5, ColorConfig::default().added, true);
+        assert!(label.starts_with("\x1b["));
+        assert!(label.contains("+"));
+        assert!(label.contains("MY_KEY (#5)"));
+        assert!(label.contains("\x1b[0m"));
     }
 
     fn skip_set(patterns: &[&str]) -> HashSet<String> {

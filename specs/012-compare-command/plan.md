@@ -41,6 +41,9 @@ for each service:
       keys in base but not in peer → - items (removed color)
       keys in peer but not in base → + items (added color)
       (if --values) keys in both with diff values → -/+ pair
+      (if --order) keys in both appearing too early → -/+ pair with
+        base/peer positions
+      (order_diffs extends the diff list when --order is set)
   ↓
 group by service → build TreeService/TreeFile/TreeItem
   ↓
@@ -88,6 +91,27 @@ render_tree()
   when the user already scoped the command — and file counts are suppressed via
   `render_tree(..., show_file_counts: false)` since a `(0)` count after a bare
   filename in a diagnostic listing is meaningless noise.
+- **`--order` only checks keys present in both files:** `order_diffs` walks the
+  peer file and reports a key when its 1-based base position is smaller than
+  the largest base position already seen among keys reported in the peer walk —
+  **Because:** keys missing from either file are already covered by the key-only
+  comparison, and reporting relative regressions (a key moving "too early"
+  relative to a predecessor) is the useful signal without flooding the output
+  with every positional change.
+- **`--order` uses the first occurrence of duplicate keys:** later duplicates
+  are ignored for ordering — **Because:** dotenv duplicates are a parse-level
+  quirk; the first occurrence is the canonical position.
+- **Order lines render as their own `-`/`+` pair with positions:** Each
+  `OutOfOrder` diff item becomes two `TreeItem`s, `- KEY (#base_pos)` in
+  `removed` and `+ KEY (#peer_pos)` in `added`, mirroring the `Different`
+  pair format — **Because:** a single item cannot carry two colors, and keeping
+  the pair parallel with the value-diff output keeps the tree uniform.
+- **`--order` conflicts with `--values`:** clap rejects combining them with
+  `conflicts_with`, even though each independently extends the diff list —
+  **Because:** both checks signal "this file drifted from the base," and
+  showing value and order noise at once obscures the single most relevant
+  drift signal. A key with both a different value and an order mismatch is
+  reported by whichever single flag the user chose.
 
 ## Dependencies
 
@@ -97,6 +121,9 @@ None. Reuses `parser::parse()`, `display::render_tree()`, `color` module.
 
 - Unit tests for: peer kind resolution, diff computation (key-only, with values),
   empty/edge cases.
+- Unit tests for `order_diffs`: identical order, swapped pair, fully reversed,
+  missing/extra keys ignored, duplicate first-occurrence, label rendering with
+  and without color.
 - Test `render_comparison` via `Output::String` (like `display` tests).
 - Manual: run against real project files.
 

@@ -110,6 +110,26 @@
   - Verify: `cargo build`, `cargo test` (140), `cargo clippy`, `cargo fmt`,
     manual smoke test of both error paths.
 
+- [x] **T13: Add `--order` key-order comparison**
+  - File: `src/cli/mod.rs`, `src/cli/compare.rs`
+  - Add `order: bool` to `Command::Compare` with `#[arg(long,
+    conflicts_with = "values")]` and dispatch it to
+    `compare::run(&cli, file_path, values, order)`.
+  - Add a `DiffItem::OutOfOrder { key, base_pos, peer_pos }` variant.
+  - Implement `order_diffs(base_pairs, peer_pairs)`: walk the peer, report a
+    key present in both files whose 1-based base position is smaller than the
+    largest base position already seen (first occurrence of duplicates).
+  - Add `order_label(prefix, key, position, color, use_color)` producing
+    `- KEY (#N)` / `+ KEY (#N)` labels.
+  - Extend the diff list with `order_diffs` results when `--order` is set;
+    render `OutOfOrder` as a `-`/`+` pair mirroring the `Different` pair.
+  - Add unit tests: same order empty, swapped pair, reversed, missing/extra
+    ignored, duplicate first-occurrence, label with/without color.
+  - Update spec/plan to document the behavior (including `--values`/`--order`
+    mutual exclusion).
+  - Verify: `cargo build`, `cargo test` (147), `cargo clippy`, `cargo fmt`,
+    manual smoke test (`--order` alone, and combined `--values --order` error).
+
 ## Verification
 
 ```sh

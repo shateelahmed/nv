@@ -26,6 +26,7 @@ understand the project's service structure.
 - Show missing keys (present in base, absent in other) with `-` prefix in red.
 - Show extra keys (absent in base, present in other) with `+` prefix in green.
 - Support value comparison via a `--values` flag.
+- Support key-order comparison via an `--order` flag.
 - Output follows the same hierarchical tree format as `nv find` and `nv leaks`.
 
 ## Non-goals
@@ -71,6 +72,25 @@ against files of matching kinds:
 - Missing/extra key display is the same as key-only mode, but with the value
   appended (`- KEY = value`).
 
+### Key-order comparison (`--order`)
+
+- With `--order`, keys present in BOTH files are checked to appear in the same
+  relative order in the peer file as in the base file.
+- Only keys present in both files participate; keys missing from either file are
+  handled by the key-only comparison instead.
+- A key is reported when it appears "too early" in the peer relative to the
+  base ordering: walking the peer in file order, a key is out of order when its
+  position in the base file is smaller than the largest base position already
+  seen among keys reported so far in the peer walk.
+- Each reported key is shown as two lines: a `- KEY (#base_position)` in
+  `removed` color and a `+ KEY (#peer_position)` in `added` color, where
+  `#` positions are 1-based.
+- Duplicate keys use their first occurrence in both files.
+- Keys with identical order produce no output.
+- `--order` is mutually exclusive with `--values` (clap `conflicts_with`);
+  passing both errors with `the argument '--values' cannot be used with
+  '--order'`.
+
 ### CLI surface
 
 ```
@@ -81,6 +101,8 @@ Arguments:
 
 Options:
   --values   Also compare values for keys present in both files.
+  --order    Also check that keys present in both files appear in the same order.
+             Cannot be combined with --values.
 
 Uses global flags: --service (to disambiguate when the same path exists in
 multiple services), --no-config, --root.
@@ -102,7 +124,9 @@ service_name/
 │   └── + EXTRA_KEY
 └── compared_file_b.env
     ├── - ANOTHER_MISSING_KEY = base_value    (with --values)
-    └── + ANOTHER_EXTRA_KEY = other_value
+    ├── + ANOTHER_EXTRA_KEY = other_value
+    ├── - OUT_OF_ORDER_KEY (#base_pos)        (with --order)
+    └── + OUT_OF_ORDER_KEY (#peer_pos)
 ```
 
 Tree branches (`├──`, `└──`, `│`) use the same coloring rules as other
@@ -204,6 +228,17 @@ omitted.
 - [ ] Given a service with `compare.skip_files: [docker/.env]`, when the
       available-files tree is shown (file not found or base excluded), the
       `docker/.env` file is NOT listed.
+- [ ] Given a base file with keys `A`, `B`, `C` and a peer file with keys
+      `A`, `C`, `B` (all values identical), when `nv compare` runs with
+      `--order` against the base file, the output shows `- B (#2)` and
+      `+ B (#3)` under the peer file.
+- [ ] Given the same files as above, when `nv compare` runs WITHOUT `--order`,
+      "No comparisons found." is printed (order is not checked by default).
+- [ ] Given a peer file with identical keys and values in the same order, when
+      `nv compare` runs with `--order`, no order lines are shown.
+- [ ] Given a key that is present in both files but has both a different value
+      and a different order, passing `--values --order` together errors with
+      `the argument '--values' cannot be used with '--order'`.
 
 ## Edge cases
 
@@ -223,3 +258,12 @@ omitted.
   where `<kind>` is `env`, `configmap`, or `secrets`.
 - Dotenv vs DotenvExample: both directions are compared, but only files
   resolvable through service discovery are included.
+- `--order` only reports keys present in both files; keys missing from either
+  file are left to the key-only comparison.
+- `--order` uses the first occurrence of duplicate keys; later duplicates are
+  ignored for ordering.
+- `--order` reports a key only when it appears before a key that precedes it in
+  the base ordering (i.e., it regresses past an already-seen base position);
+  keys that merely appear later never produce output.
+- `--values` and `--order` are mutually exclusive; combining them is a clap
+  parse error.

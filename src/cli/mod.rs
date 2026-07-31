@@ -193,6 +193,9 @@ pub enum Command {
         /// Also compare values for keys present in both files.
         #[arg(long)]
         values: bool,
+        /// Also check that keys present in both files appear in the same order.
+        #[arg(long, conflicts_with = "values")]
+        order: bool,
     },
 }
 
@@ -250,7 +253,11 @@ pub fn run() -> Result<()> {
         }
         Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
         Some(Command::Duplicates { services }) => duplicates::run(&cli, services),
-        Some(Command::Compare { file_path, values }) => compare::run(&cli, file_path, *values),
+        Some(Command::Compare {
+            file_path,
+            values,
+            order,
+        }) => compare::run(&cli, file_path, *values, *order),
         None => crate::tui::launch(&cli),
     }
 }
