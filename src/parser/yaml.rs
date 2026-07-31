@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 
-use super::ParsedPair;
+use super::{ParsedComment, ParsedPair};
 
 /// Names of the top-level blocks that hold env keys in k8s manifests.
 /// Order matters: when creating a brand-new key we prefer `stringData`.
@@ -180,6 +180,109 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
             .map(|(_, key, value)| ParsedPair { key, value })
             .collect()
     }
+}
+
+/// Parse the comment attached to each key in YAML `content`.
+///
+/// Works for both the flat and Kubernetes shapes. A key's comment is the
+/// consecutive `#` lines directly above it (top-level for the flat shape,
+/// inside the block at child indentation for the k8s shape) plus the inline
+/// `# comment` on its own line, normalized and joined with single spaces. Keys
+/// without any comment are omitted. Comments that are not attached to a key
+/// (e.g. a header above `data:`) are ignored.
+pub fn parse_comments(content: &str) -> Vec<ParsedComment> {
+    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    if is_k8s(&lines) {
+        let mut out = Vec::new();
+        for block in K8S_BLOCKS {
+            if let Some(start) = find_k8s_block(&lines, block) {
+                out.extend(collect_block_comments(&lines, start));
+            }
+        }
+        out
+    } else {
+        collect_flat_comments(&lines)
+    }
+}
+
+/// Collect the comment attached to each top-level key of a flat mapping.
+fn collect_flat_comments(lines: &[String]) -> Vec<ParsedComment> {
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+
+    for line in lines {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            pending.clear();
+        } else if trimmed.starts_with('#') {
+            // Only top-level comments attach to top-level keys.
+            if indent_of(line) == 0 {
+                pending.push(super::comment_text(line));
+            } else {
+                pending.clear();
+            }
+        } else if let Some((0, key, value)) = mapping_of(line)
+            && !value.is_empty()
+        {
+            push_comment(&mut out, key, &mut pending, line);
+        } else {
+            pending.clear();
+        }
+    }
+
+    out
+}
+
+/// Collect the comment attached to each scalar child of a block.
+///
+/// Children are the lines indented more than the block header; the first line
+/// indented the same or less ends the block. Comment lines at child
+/// indentation attach to the next child; comments at other indentation are
+/// dropped (block-level documentation).
+fn collect_block_comments(lines: &[String], block_line: usize) -> Vec<ParsedComment> {
+    let block_indent = indent_of(&lines[block_line]);
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+
+    for line in &lines[block_line + 1..] {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            pending.clear();
+            continue;
+        }
+        let indent = indent_of(line);
+        if indent <= block_indent {
+            break; // dedented back out of the block
+        }
+        if trimmed.starts_with('#') {
+            pending.push(super::comment_text(line));
+            continue;
+        }
+        if let Some((_, key, _)) = mapping_of(line) {
+            push_comment(&mut out, key, &mut pending, line);
+        } else {
+            pending.clear();
+        }
+    }
+
+    out
+}
+
+/// Append a key's combined comment (pending block + inline) to `out` if the
+/// key has any comment text.
+fn push_comment(out: &mut Vec<ParsedComment>, key: String, pending: &mut Vec<String>, line: &str) {
+    let mut comment = pending.join(" ");
+    if let Some(inline) = super::inline_comment_text(line) {
+        if !comment.is_empty() {
+            comment.push(' ');
+        }
+        comment.push_str(&inline);
+    }
+    if !comment.is_empty() {
+        out.push(ParsedComment { key, comment });
+    }
+    pending.clear();
 }
 
 /// Collect scalar children of a block starting at `block_line`.
@@ -437,5 +540,56 @@ mod tests {
         assert_eq!(yaml_scalar("123"), "\"123\"");
         assert_eq!(yaml_scalar("a: b"), "\"a: b\"");
         assert_eq!(yaml_scalar("plain"), "plain");
+    }
+
+    #[test]
+    fn comments_flat_block_and_inline() {
+        let content = "# DB connection\nDATABASE_URL: postgres://x # prod\nFOO: bar\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "DATABASE_URL".into(),
+                comment: "DB connection prod".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_flat_header_not_attached() {
+        let content = "# Auth service\nA: 1\nB: 2\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].key, "A");
+    }
+
+    #[test]
+    fn comments_flat_blank_line_breaks_block() {
+        let content = "# orphan\n\nA: 1\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_k8s_child_block() {
+        let content =
+            "kind: ConfigMap\ndata:\n  # DB config\n  DATABASE_URL: x # prod\n  FOO: bar\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "DATABASE_URL".into(),
+                comment: "DB config prod".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_k8s_header_ignored() {
+        let content = "# Auth env\nkind: ConfigMap\ndata:\n  A: 1\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
     }
 }

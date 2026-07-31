@@ -44,6 +44,9 @@ for each service:
       (if --order) keys in both appearing too early → -/+ pair with
         base/peer positions
       (order_diffs extends the diff list when --order is set)
+      (if --comments) comment_diffs replaces the other modes entirely:
+        for each key in both files, compare the normalized attached comment →
+        -/+ pair when they differ
   ↓
 group by service → build TreeService/TreeFile/TreeItem
   ↓
@@ -112,6 +115,28 @@ render_tree()
   showing value and order noise at once obscures the single most relevant
   drift signal. A key with both a different value and an order mismatch is
   reported by whichever single flag the user chose.
+- **`--comments` compares per-key attached comments:** a new
+  `parser::parse_comments` extracts each key's comment (consecutive `#` lines
+  directly above plus the inline `#` comment on the key's own line, normalized
+  and joined with spaces), and `comment_diffs` compares only keys present in
+  both files — **Because:** the tool is key-centric, so "compare the comments"
+  most usefully means "which key lost/changed its documentation", and a bare
+  set-of-comments diff would not tie a comment to the key it documents.
+- **`--comments` is mutually exclusive with `--values`/`--order`:**
+  `#[arg(long, conflicts_with_all = ["values", "order"])]` — **Because:** it
+  swaps the comparison dimension entirely (comment text instead of key/value),
+  so combining it with the value/order checks would be ambiguous.
+- **Comment comparison is normalized:** leading `#` markers and whitespace are
+  stripped and block+inline parts are joined with a single space, so `# DB`
+  above a key plus `# prod` inline compares equal to a single `# DB prod`
+  comment — **Because:** the same documentation expressed as a block versus an
+  inline comment should not read as drift.
+- **Comment attachment is format-aware:** in dotenv and flat YAML only
+  top-level `#` lines directly above a key attach; in k8s manifests only
+  comment lines at child indentation inside `data:`/`stringData:` blocks attach
+  to the following child. Unattached comments (blank-line-separated, or a
+  header above `data:`) are ignored — **Because:** attaching docs to the wrong
+  key would produce misleading diffs.
 
 ## Dependencies
 
@@ -123,6 +148,12 @@ None. Reuses `parser::parse()`, `display::render_tree()`, `color` module.
   empty/edge cases.
 - Unit tests for `order_diffs`: identical order, swapped pair, fully reversed,
   missing/extra keys ignored, duplicate first-occurrence, label rendering with
+  and without color.
+- Unit tests for comment extraction (dotenv + flat/k8s YAML): block above key,
+  inline, combined, blank-line breaks block, header ignored, quoted `#` in
+  values not treated as comments.
+- Unit tests for `comment_diffs`: identical comments, changed comment, comment
+  added/removed on one side, key-missing-in-peer ignored, label rendering with
   and without color.
 - Test `render_comparison` via `Output::String` (like `display` tests).
 - Manual: run against real project files.

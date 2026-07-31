@@ -130,6 +130,32 @@
   - Verify: `cargo build`, `cargo test` (147), `cargo clippy`, `cargo fmt`,
     manual smoke test (`--order` alone, and combined `--values --order` error).
 
+- [x] **T14: Add `--comments` comment comparison**
+  - File: `src/parser/mod.rs`, `src/parser/dotenv.rs`, `src/parser/yaml.rs`,
+    `src/cli/mod.rs`, `src/cli/compare.rs`
+  - Add `parser::ParsedComment` and `parser::parse_comments(content, kind)`
+    with per-format extraction (dotenv, flat YAML, k8s YAML): a key's comment
+    is the consecutive `#` lines directly above it (blank or non-comment lines
+    break the block) plus the inline `# comment` on its own line. Shared
+    helpers `comment_text` / `inline_comment_text` normalize comments (strip
+    `#`/whitespace, respect quotes).
+  - Add `comments: bool` to `Command::Compare` with
+    `#[arg(long, conflicts_with_all = ["values", "order"])]` and dispatch it
+    to `compare::run(&cli, file_path, values, order, comments)`.
+  - Add a `DiffItem::CommentDiff { key, base_comment, peer_comment }` variant
+    and `comment_diffs()` comparing only keys present in both files; a key
+    documented on one side only counts as a difference (empty comment on the
+    bare side).
+  - Render `CommentDiff` as a `- KEY # base_comment` / `+ KEY # peer_comment`
+    pair via `comment_label()`; a side without a comment renders as `- KEY` /
+    `+ KEY`.
+  - Add unit tests for parser comment extraction and `comment_diffs` /
+    `comment_label`.
+  - Update spec/plan to document the behavior.
+  - Verify: `cargo build`, `cargo test` (170), `cargo clippy`, `cargo fmt`,
+    manual smoke test (`--comments` alone, and combined `--comments --values` /
+    `--comments --order` errors).
+
 ## Verification
 
 ```sh

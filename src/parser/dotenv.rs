@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use super::ParsedPair;
+use super::{ParsedComment, ParsedPair};
 
 /// Split a dotenv line into an optional `(key, value)` pair.
 ///
@@ -81,6 +81,42 @@ pub fn parse(content: &str) -> Vec<ParsedPair> {
         .filter_map(parse_line) // keep only lines that parse to a pair
         .map(|(key, value)| ParsedPair { key, value }) // convert to our struct
         .collect() // gather everything into a Vec
+}
+
+/// Parse the comment attached to each assignment in dotenv `content`.
+///
+/// A key's comment is the consecutive `#` lines directly above it (a blank or
+/// other non-comment line breaks the block) plus the inline `# comment` on its
+/// own line, normalized and joined with single spaces. Keys without any comment
+/// are omitted.
+pub fn parse_comments(content: &str) -> Vec<ParsedComment> {
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            pending.clear();
+        } else if trimmed.starts_with('#') {
+            pending.push(super::comment_text(line));
+        } else if let Some((key, _)) = parse_line(line) {
+            let mut comment = pending.join(" ");
+            if let Some(inline) = super::inline_comment_text(line) {
+                if !comment.is_empty() {
+                    comment.push(' ');
+                }
+                comment.push_str(&inline);
+            }
+            if !comment.is_empty() {
+                out.push(ParsedComment { key, comment });
+            }
+            pending.clear();
+        } else {
+            pending.clear();
+        }
+    }
+
+    out
 }
 
 /// Remove `key` from `content`, preserving comments and blank lines.
@@ -233,5 +269,87 @@ mod tests {
         let content = "FOO=old\r\nBAR=keep\r\n";
         let out = set_value(content, "FOO", "new");
         assert_eq!(out, "FOO=new\r\nBAR=keep\r\n");
+    }
+
+    #[test]
+    fn comments_block_above_key() {
+        let content = "# DB connection\nDATABASE_URL=postgres://x\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "DATABASE_URL".into(),
+                comment: "DB connection".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_inline_on_own_line() {
+        let comments = parse_comments("FOO=bar # the foo\n");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "FOO".into(),
+                comment: "the foo".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_block_plus_inline_join() {
+        let content = "# DB\n# uses TLS\nDATABASE_URL=x # production\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "DATABASE_URL".into(),
+                comment: "DB uses TLS production".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_blank_line_breaks_block() {
+        let content = "# orphan\n\nFOO=bar\n";
+        let comments = parse_comments(content);
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_key_without_comment_omitted() {
+        let content = "# doc\nA=1\nB=2\n";
+        let comments = parse_comments(content);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].key, "A");
+    }
+
+    #[test]
+    fn comments_exported_line() {
+        let comments = parse_comments("export FOO=bar # exported\n");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(
+            comments[0],
+            ParsedComment {
+                key: "FOO".into(),
+                comment: "exported".into()
+            }
+        );
+    }
+
+    #[test]
+    fn comments_hash_inside_value_is_not_inline() {
+        let comments = parse_comments("FOO=abc#def\n");
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn comments_quoted_hash_ignored() {
+        let comments = parse_comments("FOO=\"a # b\" # real\n");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].comment, "real");
     }
 }

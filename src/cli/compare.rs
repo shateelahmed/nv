@@ -38,6 +38,12 @@ enum DiffItem {
         base_pos: usize,
         peer_pos: usize,
     },
+    /// Key in both but with a different attached comment (only with --comments).
+    CommentDiff {
+        key: String,
+        base_comment: String,
+        peer_comment: String,
+    },
 }
 
 /// Return the file kinds that a base file of `kind` should be compared against.
@@ -203,8 +209,83 @@ fn order_label(
     }
 }
 
+/// Compute the comment diff between base and peer files.
+///
+/// Only keys present in BOTH files participate; a key with the same attached
+/// comment in both files is omitted. A key documented in one file but not the
+/// other counts as a difference (with an empty comment on the bare side).
+fn comment_diffs(
+    base_pairs: &[ParsedPair],
+    peer_pairs: &[ParsedPair],
+    base_comments: &[parser::ParsedComment],
+    peer_comments: &[parser::ParsedComment],
+) -> Vec<DiffItem> {
+    let base_keys: HashSet<&str> = base_pairs.iter().map(|p| p.key.as_str()).collect();
+    let peer_keys: HashSet<&str> = peer_pairs.iter().map(|p| p.key.as_str()).collect();
+
+    let base_map: BTreeMap<&str, &str> = base_comments
+        .iter()
+        .map(|c| (c.key.as_str(), c.comment.as_str()))
+        .collect();
+    let peer_map: BTreeMap<&str, &str> = peer_comments
+        .iter()
+        .map(|c| (c.key.as_str(), c.comment.as_str()))
+        .collect();
+
+    let mut items: Vec<DiffItem> = Vec::new();
+    for key in base_keys.intersection(&peer_keys) {
+        let base_comment = base_map.get(key).copied().unwrap_or("");
+        let peer_comment = peer_map.get(key).copied().unwrap_or("");
+        if base_comment != peer_comment {
+            items.push(DiffItem::CommentDiff {
+                key: key.to_string(),
+                base_comment: base_comment.to_string(),
+                peer_comment: peer_comment.to_string(),
+            });
+        }
+    }
+    items
+}
+
+/// Build the ANSI-colored label for a comment-diff line (`- KEY # comment`).
+///
+/// The comment is shown after a `# ` separator in the `value` color; a side
+/// without a comment renders as just `- KEY` / `+ KEY`.
+fn comment_label(
+    prefix: &str,
+    key: &str,
+    comment: &str,
+    prefix_color: AnsiColor,
+    colors: &ColorConfig,
+    use_color: bool,
+) -> String {
+    if use_color {
+        if comment.is_empty() {
+            format!("{} {key}", color::colorize(prefix, prefix_color, use_color))
+        } else {
+            format!(
+                "{} {key} # {}{}{}",
+                color::colorize(prefix, prefix_color, use_color),
+                colors.value.code(),
+                comment,
+                AnsiColor::Reset.code(),
+            )
+        }
+    } else if comment.is_empty() {
+        format!("{prefix} {key}")
+    } else {
+        format!("{prefix} {key} # {comment}")
+    }
+}
+
 /// Handle `nv compare`: compare a base file against peer files.
-pub fn run(cli: &Cli, file_path: &str, compare_values: bool, compare_order: bool) -> Result<()> {
+pub fn run(
+    cli: &Cli,
+    file_path: &str,
+    compare_values: bool,
+    compare_order: bool,
+    compare_comments: bool,
+) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(ctx.source);
 
@@ -291,6 +372,7 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool, compare_order: bool
     let base_content = fs::read_to_string(&base_file.path)
         .map_err(|e| anyhow::anyhow!("cannot read base file '{}': {}", base_file.display, e))?;
     let base_pairs = parse_pairs(&base_content, base_kind);
+    let base_comments = parser::parse_comments(&base_content, base_kind);
 
     let peer_kinds = peer_kinds(base_kind);
     let mut comparisons: BTreeMap<String, BTreeMap<String, Vec<DiffItem>>> = BTreeMap::new();
@@ -322,10 +404,16 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool, compare_order: bool
                 Err(_) => continue,
             };
             let peer_pairs = parse_pairs(&content, file.kind);
-            let mut diffs = diff_pairs(&base_pairs, &peer_pairs, compare_values);
-            if compare_order {
-                diffs.extend(order_diffs(&base_pairs, &peer_pairs));
-            }
+            let diffs = if compare_comments {
+                let peer_comments = parser::parse_comments(&content, file.kind);
+                comment_diffs(&base_pairs, &peer_pairs, &base_comments, &peer_comments)
+            } else {
+                let mut d = diff_pairs(&base_pairs, &peer_pairs, compare_values);
+                if compare_order {
+                    d.extend(order_diffs(&base_pairs, &peer_pairs));
+                }
+                d
+            };
 
             if diffs.is_empty() {
                 continue;
@@ -507,6 +595,34 @@ fn print_comparisons(
                                         key,
                                         *peer_pos,
                                         colors.added,
+                                        use_color,
+                                    ),
+                                    color: colors.added,
+                                });
+                            }
+                            DiffItem::CommentDiff {
+                                key,
+                                base_comment,
+                                peer_comment,
+                            } => {
+                                items.push(TreeItem {
+                                    label: comment_label(
+                                        "-",
+                                        key,
+                                        base_comment,
+                                        colors.removed,
+                                        colors,
+                                        use_color,
+                                    ),
+                                    color: colors.removed,
+                                });
+                                items.push(TreeItem {
+                                    label: comment_label(
+                                        "+",
+                                        key,
+                                        peer_comment,
+                                        colors.added,
+                                        colors,
                                         use_color,
                                     ),
                                     color: colors.added,
@@ -839,6 +955,142 @@ mod tests {
         assert!(label.contains("+"));
         assert!(label.contains("MY_KEY (#5)"));
         assert!(label.contains("\x1b[0m"));
+    }
+
+    fn comment(key: &str, comment: &str) -> parser::ParsedComment {
+        parser::ParsedComment {
+            key: key.into(),
+            comment: comment.into(),
+        }
+    }
+
+    #[test]
+    fn test_comment_diffs_identical_comments_is_empty() {
+        let base = vec![pair("A", "1"), pair("B", "2")];
+        let peer = vec![pair("A", "1"), pair("B", "2")];
+        let base_comments = vec![comment("A", "doc a"), comment("B", "doc b")];
+        let peer_comments = vec![comment("A", "doc a"), comment("B", "doc b")];
+        assert!(comment_diffs(&base, &peer, &base_comments, &peer_comments).is_empty());
+    }
+
+    #[test]
+    fn test_comment_diffs_changed_comment() {
+        let base = vec![pair("A", "1"), pair("B", "2")];
+        let peer = vec![pair("A", "1"), pair("B", "2")];
+        let base_comments = vec![comment("A", "doc a"), comment("B", "old")];
+        let peer_comments = vec![comment("A", "doc a"), comment("B", "new")];
+        let diffs = comment_diffs(&base, &peer, &base_comments, &peer_comments);
+        assert_eq!(diffs.len(), 1);
+        match &diffs[0] {
+            DiffItem::CommentDiff {
+                key,
+                base_comment,
+                peer_comment,
+            } => {
+                assert_eq!(key, "B");
+                assert_eq!(base_comment, "old");
+                assert_eq!(peer_comment, "new");
+            }
+            other => panic!("expected CommentDiff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_comment_diffs_comment_added_in_peer() {
+        // B exists in both files but only the peer documents it.
+        let base = vec![pair("A", "1"), pair("B", "2")];
+        let peer = vec![pair("A", "1"), pair("B", "2")];
+        let base_comments = vec![comment("A", "doc a")];
+        let peer_comments = vec![comment("A", "doc a"), comment("B", "doc b")];
+        let diffs = comment_diffs(&base, &peer, &base_comments, &peer_comments);
+        assert_eq!(diffs.len(), 1);
+        match &diffs[0] {
+            DiffItem::CommentDiff {
+                key,
+                base_comment,
+                peer_comment,
+            } => {
+                assert_eq!(key, "B");
+                assert_eq!(base_comment, "");
+                assert_eq!(peer_comment, "doc b");
+            }
+            other => panic!("expected CommentDiff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_comment_diffs_comment_removed_in_peer() {
+        // B exists in both files but only the base documents it.
+        let base = vec![pair("A", "1"), pair("B", "2")];
+        let peer = vec![pair("A", "1"), pair("B", "2")];
+        let base_comments = vec![comment("A", "doc a"), comment("B", "doc b")];
+        let peer_comments = vec![comment("A", "doc a")];
+        let diffs = comment_diffs(&base, &peer, &base_comments, &peer_comments);
+        assert_eq!(diffs.len(), 1);
+        match &diffs[0] {
+            DiffItem::CommentDiff {
+                key,
+                base_comment,
+                peer_comment,
+            } => {
+                assert_eq!(key, "B");
+                assert_eq!(base_comment, "doc b");
+                assert_eq!(peer_comment, "");
+            }
+            other => panic!("expected CommentDiff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_comment_diffs_key_missing_in_peer_ignored() {
+        // C has a comment but is absent from the peer file — a key-level
+        // concern, not a comment diff.
+        let base = vec![pair("A", "1"), pair("C", "3")];
+        let peer = vec![pair("A", "1")];
+        let base_comments = vec![comment("A", "doc a"), comment("C", "doc c")];
+        let peer_comments = vec![comment("A", "doc a")];
+        assert!(comment_diffs(&base, &peer, &base_comments, &peer_comments).is_empty());
+    }
+
+    #[test]
+    fn test_comment_diffs_no_comments_is_empty() {
+        let base = vec![pair("A", "1")];
+        let peer = vec![pair("A", "1")];
+        assert!(comment_diffs(&base, &peer, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn test_comment_label_no_color() {
+        let colors = ColorConfig::default();
+        let label = comment_label("-", "MY_KEY", "my doc", colors.removed, &colors, false);
+        assert_eq!(label, "- MY_KEY # my doc");
+    }
+
+    #[test]
+    fn test_comment_label_with_color() {
+        let colors = ColorConfig::default();
+        let label = comment_label("+", "MY_KEY", "my doc", colors.added, &colors, true);
+        assert!(label.starts_with("\x1b["));
+        assert!(label.contains("+"));
+        assert!(label.contains("MY_KEY # "));
+        assert!(label.contains("my doc"));
+        assert!(label.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_comment_label_empty_comment_no_color() {
+        let colors = ColorConfig::default();
+        let label = comment_label("+", "MY_KEY", "", colors.added, &colors, false);
+        assert_eq!(label, "+ MY_KEY");
+    }
+
+    #[test]
+    fn test_comment_label_empty_comment_with_color() {
+        let colors = ColorConfig::default();
+        let label = comment_label("-", "MY_KEY", "", colors.removed, &colors, true);
+        assert!(label.contains("-"));
+        assert!(label.contains("MY_KEY"));
+        assert!(!label.contains("#"));
     }
 
     fn skip_set(patterns: &[&str]) -> HashSet<String> {

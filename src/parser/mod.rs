@@ -64,6 +64,18 @@ pub struct ParsedPair {
     pub value: String,
 }
 
+/// A key and the comment attached to it in a file.
+///
+/// The comment combines the `#` comment lines directly above the key with an
+/// optional inline `# comment` on the key's own line. Lines are normalized
+/// (leading `#` and whitespace stripped) and joined with single spaces, so the
+/// same comment written as a block or inline compares equal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedComment {
+    pub key: String,
+    pub comment: String,
+}
+
 /// Parse the key/value pairs from file `content` of the given `kind`.
 ///
 /// Delegates to the YAML or dotenv parser depending on the file kind.
@@ -73,6 +85,58 @@ pub fn parse(content: &str, kind: FileKind) -> Vec<ParsedPair> {
     } else {
         dotenv::parse(content)
     }
+}
+
+/// Parse the comment attached to each key in file `content` of the given `kind`.
+///
+/// Only keys that have a comment produce an entry; keys without any comment
+/// are absent. Delegates to the YAML or dotenv parser depending on the file
+/// kind. The returned comments are normalized via [`comment_text`] /
+/// [`inline_comment_text`].
+pub fn parse_comments(content: &str, kind: FileKind) -> Vec<ParsedComment> {
+    if kind.is_yaml() {
+        yaml::parse_comments(content)
+    } else {
+        dotenv::parse_comments(content)
+    }
+}
+
+/// Normalize a full-line comment into comparable text: strip indentation, all
+/// leading `#` markers, and surrounding whitespace. `"  # DB config "` becomes
+/// `"DB config"`.
+pub(crate) fn comment_text(line: &str) -> String {
+    line.trim_start().trim_start_matches('#').trim().to_string()
+}
+
+/// Extract the trailing `# comment` text from an assignment/mapping line.
+///
+/// Returns `None` when there is no inline comment. The `#` must be preceded by
+/// whitespace (space or tab) and must not sit inside single or double quotes,
+/// matching how YAML inline comments are delimited. Callers handle full-line
+/// comment lines separately before invoking this.
+pub(crate) fn inline_comment_text(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'#' if !in_single
+                && !in_double
+                && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') =>
+            {
+                let text = line[i + 1..].trim();
+                return if text.is_empty() {
+                    None
+                } else {
+                    Some(text.to_string())
+                };
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Return new file content with `key` set to `value`, creating the key if it

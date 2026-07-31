@@ -196,6 +196,9 @@ pub enum Command {
         /// Also check that keys present in both files appear in the same order.
         #[arg(long, conflicts_with = "values")]
         order: bool,
+        /// Compare the comment attached to each key present in both files.
+        #[arg(long, conflicts_with_all = ["values", "order"])]
+        comments: bool,
     },
 }
 
@@ -257,7 +260,8 @@ pub fn run() -> Result<()> {
             file_path,
             values,
             order,
-        }) => compare::run(&cli, file_path, *values, *order),
+            comments,
+        }) => compare::run(&cli, file_path, *values, *order, *comments),
         None => crate::tui::launch(&cli),
     }
 }

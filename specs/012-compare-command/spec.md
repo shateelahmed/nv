@@ -27,6 +27,7 @@ understand the project's service structure.
 - Show extra keys (absent in base, present in other) with `+` prefix in green.
 - Support value comparison via a `--values` flag.
 - Support key-order comparison via an `--order` flag.
+- Support comment comparison via a `--comments` flag.
 - Output follows the same hierarchical tree format as `nv find` and `nv leaks`.
 
 ## Non-goals
@@ -91,6 +92,30 @@ against files of matching kinds:
   passing both errors with `the argument '--values' cannot be used with
   '--order'`.
 
+### Comment comparison (`--comments`)
+
+- With `--comments`, the comment attached to each key present in BOTH files is
+  compared instead of keys or values.
+- A key's attached comment combines the consecutive `#` comment lines directly
+  above it (a blank or non-comment line breaks the block) with the inline
+  `# comment` on the key's own line. Comment text is normalized by stripping
+  leading `#` markers and whitespace; block and inline parts are joined with
+  single spaces, so the same comment written as a block or inline compares
+  equal.
+- Only keys present in both files participate; a key missing from either file
+  is a key-level difference and is ignored in comment mode.
+- A key with identical comments in both files is omitted.
+- A key documented in one file but not the other is a difference; the side
+  without a comment renders without a comment suffix.
+- Each differing key is shown as two lines: a `- KEY # base_comment` in
+  `removed` color and a `+ KEY # peer_comment` in `added` color, mirroring the
+  `Different` value pair. A side without a comment renders as just `- KEY` /
+  `+ KEY`.
+- `--comments` is mutually exclusive with `--values` and `--order` (clap
+  `conflicts_with_all`); passing `--comments` with either errors with
+  `the argument '--comments' cannot be used with '--values'` /
+  `'--order'`.
+
 ### CLI surface
 
 ```
@@ -103,6 +128,8 @@ Options:
   --values   Also compare values for keys present in both files.
   --order    Also check that keys present in both files appear in the same order.
              Cannot be combined with --values.
+  --comments Compare the comment attached to each key present in both files.
+             Cannot be combined with --values or --order.
 
 Uses global flags: --service (to disambiguate when the same path exists in
 multiple services), --no-config, --root.
@@ -126,7 +153,9 @@ service_name/
     ├── - ANOTHER_MISSING_KEY = base_value    (with --values)
     ├── + ANOTHER_EXTRA_KEY = other_value
     ├── - OUT_OF_ORDER_KEY (#base_pos)        (with --order)
-    └── + OUT_OF_ORDER_KEY (#peer_pos)
+    ├── + OUT_OF_ORDER_KEY (#peer_pos)
+    ├── - DOCUMENTED_KEY # base_comment       (with --comments)
+    └── + DOCUMENTED_KEY # peer_comment
 ```
 
 Tree branches (`├──`, `└──`, `│`) use the same coloring rules as other
@@ -239,6 +268,23 @@ omitted.
 - [ ] Given a key that is present in both files but has both a different value
       and a different order, passing `--values --order` together errors with
       `the argument '--values' cannot be used with '--order'`.
+- [ ] Given a base `.env` with `# DB connection` above `DATABASE_URL` and a
+      peer `.env` with `# DB password` above `DATABASE_URL`, when `nv compare`
+      runs with `--comments`, the output shows `- DATABASE_URL # DB connection`
+      and `+ DATABASE_URL # DB password` under the peer file.
+- [ ] Given a key documented with `# DB` above it plus an inline `# prod`, and
+      a peer file with the same text written as a single `# DB prod` comment,
+      when `nv compare` runs with `--comments`, no difference is reported
+      (block and inline comments are normalized).
+- [ ] Given a key that is documented in the base file but has no comment in the
+      peer file, when `nv compare` runs with `--comments`, the output shows the
+      base comment on the `-` line and a bare `+ KEY` line.
+- [ ] Given a key present in only one of the files, when `nv compare` runs with
+      `--comments`, no difference is reported for that key (key-presence is a
+      key-level concern).
+- [ ] Given `--comments` combined with either `--values` or `--order`, the
+      command errors with `the argument '--comments' cannot be used with
+      '--values'` / `'--order'`.
 
 ## Edge cases
 
@@ -267,3 +313,17 @@ omitted.
   keys that merely appear later never produce output.
 - `--values` and `--order` are mutually exclusive; combining them is a clap
   parse error.
+- `--comments` is mutually exclusive with `--values` and `--order`; combining
+  them is a clap parse error.
+- `--comments` only reports keys present in both files; key-presence
+  differences are left to the default key-only comparison.
+- `--comments` compares the normalized comment (leading `#`/whitespace
+  stripped, block and inline parts joined with spaces); a comment written as a
+  block above a key compares equal to the same text inline.
+- `--comments` treats a key documented in one file but not the other as a
+  difference, rendering the undocumented side as a bare `- KEY` / `+ KEY` line.
+- `--comments` attaches a comment block only when the `#` lines are directly
+  above the key (blank or non-comment lines break the block) and, for YAML,
+  only at the relevant indentation (top-level for flat files, child-level
+  inside k8s `data:`/`stringData:` blocks). Unattached comments (e.g. a header
+  above `data:`) are ignored.
