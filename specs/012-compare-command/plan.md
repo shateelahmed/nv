@@ -71,9 +71,13 @@ render_tree()
   helper approach as `special_secret_keys_for` — **Because:** consistent with
   the established `unused` command, and reuses the same glob-matching semantics
   users already know.
-- **The base file is never filtered by `skip_files`:** It is the file the user
-  explicitly requested — **Because:** filtering it would produce a confusing
-  "not found" error for a path the user clearly intended.
+- **The base file is never silently filtered by `skip_files`:** If the
+  requested file matches `skip_files`, the command errors with
+  `file '<path>' is excluded by compare.skip_files.` instead of comparing —
+  **Because:** silently ignoring the user's explicit request would be
+  confusing. The error's `Available <kind> files:` tree filters to files of the
+  same kind, names that kind (`env`, `configmap`, `secrets`) in the header, and
+  omits the requested file so the user can pick a valid alternative.
 - **Not-found error lists files via `render_tree`:** The message is
   `file '<path>' not found.` and the available files are rendered with the same
   `TreeService`/`TreeFile`/`render_tree` machinery (items empty) — **Because:**

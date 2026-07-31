@@ -46,6 +46,15 @@ fn peer_kinds(kind: FileKind) -> Vec<FileKind> {
     }
 }
 
+/// Human-readable kind label for the "Available ... files:" header.
+fn kind_label(kind: FileKind) -> &'static str {
+    match kind {
+        FileKind::Dotenv | FileKind::DotenvExample => "env",
+        FileKind::ConfigMap => "configmap",
+        FileKind::Secret => "secrets",
+    }
+}
+
 /// Parse a file's content into key-value pairs.
 fn parse_pairs(content: &str, kind: FileKind) -> Vec<ParsedPair> {
     parser::parse(content, kind)
@@ -79,6 +88,18 @@ fn matches_skip_pattern(relative_str: &str, name: &str, skip_files: &HashSet<Str
         }
     }
     false
+}
+
+/// Whether an env file matches a service's merged skip_files set.
+fn file_is_skipped(
+    file: &crate::model::EnvFile,
+    service: &crate::model::Service,
+    skip_files: &HashSet<String>,
+) -> bool {
+    let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
+    let relative_str = relative.to_str().unwrap_or("");
+    let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    matches_skip_pattern(relative_str, name, skip_files)
 }
 
 /// Build the merged set of files to skip for a service — global
@@ -186,6 +207,8 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
         let tree = available_files_tree(
             &ctx.services,
             &service_filter,
+            None,
+            None,
             &ctx.colors(),
             color::should_use_color(),
         );
@@ -214,6 +237,30 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
         .expect("file just matched");
     let base_kind = base_file.kind;
 
+    // A base file listed under compare.skip_files cannot be compared. Show an
+    // error with the reason and list available files of the same kind.
+    let base_skip_files = build_skip_files(&ctx.config, &base_service.name);
+    if file_is_skipped(base_file, base_service, &base_skip_files) {
+        let tree = available_files_tree(
+            &ctx.services,
+            &service_filter,
+            Some(base_kind),
+            Some(file_path),
+            &ctx.colors(),
+            color::should_use_color(),
+        );
+        let tree = if tree.is_empty() {
+            tree
+        } else {
+            format!("Available {} files:\n{}", kind_label(base_kind), tree)
+        };
+        bail!(
+            "file '{}' is excluded by compare.skip_files.\n{}",
+            file_path,
+            tree
+        );
+    }
+
     let base_content = fs::read_to_string(&base_file.path)
         .map_err(|e| anyhow::anyhow!("cannot read base file '{}': {}", base_file.display, e))?;
     let base_pairs = parse_pairs(&base_content, base_kind);
@@ -237,10 +284,7 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
             }
 
             // Skip peer files matching configured skip_files patterns.
-            let relative = file.path.strip_prefix(&service.path).unwrap_or(&file.path);
-            let relative_str = relative.to_str().unwrap_or("");
-            let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if matches_skip_pattern(relative_str, name, &skip_files) {
+            if file_is_skipped(file, service, &skip_files) {
                 continue;
             }
 
@@ -278,33 +322,44 @@ pub fn run(cli: &Cli, file_path: &str, compare_values: bool) -> Result<()> {
 
 /// Build the available-files listing in the uniform tree format, as a string.
 ///
-/// Used when the requested base file path is not found, so the user can see the
-/// valid paths at a glance. When `service_filter` is non-empty, only those
-/// services' files are included.
+/// Used when the requested base file path is not found or is excluded by
+/// `compare.skip_files`, so the user can see valid paths at a glance. When
+/// `service_filter` is non-empty, only those services' files are included.
+/// When `kind_filter` is set, only files of that kind are listed. When
+/// `exclude_path` is set, files with that display path are omitted (the
+/// requested file is not "available").
 fn available_files_tree(
     services: &[crate::model::Service],
     service_filter: &[&str],
+    kind_filter: Option<FileKind>,
+    exclude_path: Option<&str>,
     colors: &ColorConfig,
     use_color: bool,
 ) -> String {
     let trees: Vec<TreeService> = services
         .iter()
-        .filter(|s| {
-            !s.files.is_empty()
-                && (service_filter.is_empty() || service_filter.iter().any(|n| n == &s.name))
-        })
-        .map(|s| TreeService {
-            name: s.name.clone(),
-            count: s.files.len(),
-            files: s
+        .filter(|s| service_filter.is_empty() || service_filter.iter().any(|n| n == &s.name))
+        .filter_map(|s| {
+            let files: Vec<TreeFile> = s
                 .files
                 .iter()
+                .filter(|f| kind_filter.is_none_or(|k| f.kind == k))
+                .filter(|f| exclude_path.is_none_or(|p| f.display != p))
                 .map(|f| TreeFile {
                     name: f.display.clone(),
                     count: 0,
                     items: Vec::new(),
                 })
-                .collect(),
+                .collect();
+            if files.is_empty() {
+                None
+            } else {
+                Some(TreeService {
+                    name: s.name.clone(),
+                    count: files.len(),
+                    files,
+                })
+            }
         })
         .collect();
 

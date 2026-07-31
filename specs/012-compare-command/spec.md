@@ -145,9 +145,18 @@ services:
 - `skip_files` entries are matched against the relative path from the service
   root directory (e.g., `docker/.env`, `docker/app/.env.example`).
 - `skip_files` entries can also match just the file name (e.g., `custom.env`).
-- The base file is NEVER skipped — it is the file the user explicitly asked to
-  compare. Only peer (compared) files are filtered.
+- If the requested base file matches a `skip_files` pattern, the command
+  errors explicitly instead of comparing (never silently ignored) — only peer
+  (compared) files are silently filtered.
 - `skip_files` has no built-in defaults.
+
+**Requested base file is excluded:** If the file the user asks to compare is
+itself listed under `skip_files`, the command MUST error with
+`file '<path>' is excluded by compare.skip_files.` followed by an
+`Available <kind> files:` tree listing only files of the same kind as the
+requested file (with the requested file itself omitted), so the user can pick
+an alternative. The `<kind>` label is `env` for dotenv/dotenv_example files,
+`configmap` for configmap files, and `secrets` for secret files.
 
 ### File not found
 
@@ -184,6 +193,11 @@ omitted.
 - [ ] Given `compare.skip_files: [custom.env]` where `custom.env` is a
       sub-path (e.g., `docker/custom.env`), when `nv compare` runs, the file
       is excluded by its file name alone.
+- [ ] Given the requested file is listed under `compare.skip_files`, the
+      command errors with `file '<path>' is excluded by compare.skip_files.`
+      and lists available files of the same kind (excluding the requested
+      file), with a header naming the kind (`Available env files:`,
+      `Available configmap files:`, `Available secrets files:`).
 
 ## Edge cases
 
@@ -196,6 +210,9 @@ omitted.
 - No other files of the same kind → "No comparisons found."
 - Binary or unreadable compared files → silently skipped.
 - Files matching a `compare.skip_files` pattern → excluded from comparison.
-- The base file is never excluded by `skip_files`.
+- Requested base file itself listed under `compare.skip_files` → error
+  `file '<path>' is excluded by compare.skip_files.` plus an
+  `Available <kind> files:` tree of same-kind files (requested file omitted),
+  where `<kind>` is `env`, `configmap`, or `secrets`.
 - Dotenv vs DotenvExample: both directions are compared, but only files
   resolvable through service discovery are included.

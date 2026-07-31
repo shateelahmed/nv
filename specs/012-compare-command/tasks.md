@@ -86,6 +86,19 @@
   - Other commands pass `true` (unchanged output).
   - Verify: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`.
 
+- [x] **T11: Error when the requested base file is under `skip_files`**
+  - File: `src/cli/compare.rs`
+  - Add a `file_is_skipped` helper (reused by the peer loop).
+  - After base-file resolution, if the base file matches its service's merged
+    `skip_files`, error with `file '<path>' is excluded by compare.skip_files.`
+  - The error's `Available files:` tree lists only files of the same kind and
+    omits the requested file; `--service` filtering still applies.
+  - The header names the kind via `kind_label`: `Available env files:`,
+    `Available configmap files:`, `Available secrets files:`.
+  - Update spec/plan to document the behavior.
+  - Verify: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`,
+    manual smoke test.
+
 ## Verification
 
 ```sh
