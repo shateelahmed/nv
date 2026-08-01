@@ -172,3 +172,15 @@ leaks --clean/compare --reorder), `Generate a markdown list of changes?`
 (changes), and the wizard's three (`…exists. Overwrite?`, `Create one now?`,
 `Customize which files count as env files per service?`).
 
+### Configmap bullets always carry values
+
+Real-repo review (`pol-payment-core-ms` prod) showed configmap keys whose
+`--from` value was empty (`''`) rendered as bare bullets in the markdown
+(`- WA_API_BASE_URL`). Per the value rule, every configmap Created/Updated
+bullet must read `key: value`: empty values now render `key:` and an
+empty-value key with an annotation renders `key: (from secret)`; secrets
+bullets stay bare unless a real configmap value was moved in. Unit test
+`markdown_configmap_empty_value_still_renders_value`; verified on
+`pol-payment-core-ms` (prod `BKASH_FILE_DATE_FORMAT:`, `WA_API_BASE_URL:`, …).
+
+

@@ -272,8 +272,9 @@ grouped by file kind with `<strong>` subsection headers:
 - Created and Updated changes are merged into one `<strong>Updated</strong>`
   section (sorted by key); secrets use the same "Updated" label for their
   created keys, and secrets never have true value updates.
-- Configmap bullets render as `- key: value` (Created/Updated use the `--from`
-  value, Deleted renders the bare key).
+- Configmap bullets always render as `- key: value`: Created/Updated use the
+  `--from` value — an empty value still renders `- key:` — and Deleted renders
+  the bare key.
 - Secrets bullets render as `- key`; the moved-from-configmap case renders as
   `- key: value (from configmap)` only when the configmap holds a real value —
   redacted placeholders (`xxxx…`) or empty values render the bare key.
@@ -432,6 +433,10 @@ bugs that were fixed and folded back into this spec:
    `context::confirm` helper built on a validated text input rather than
    dialoguer's `Confirm`: the typed `y`/`n` is echoed with a visible, blinking
    cursor at the end of the input, and Enter accepts the default.
+10. **Configmap bullets always carry values.** Every configmap Created/Updated
+    bullet in the markdown reads `key: value`, including empty values (rendered
+    `key:`); only secrets bullets stay bare unless a real configmap value was
+    moved in (`from configmap`).
 
 ## Assistant-config sync
 

@@ -349,16 +349,44 @@ fn value_part(item: &Item) -> String {
 }
 
 /// Render one item as a markdown bullet (without the leading `- `).
+///
+/// Configmap bullets always carry the key's value, even when it is empty, so
+/// every configmap line reads `KEY: value`. Secret bullets render bare unless
+/// a key moved out of a configmap with a real value to show.
 fn markdown_label(item: &Item) -> String {
     match item.change {
-        ChangeKind::Created | ChangeKind::Updated => {
-            let part = value_part(item);
-            if part.is_empty() {
-                item.key.clone()
-            } else {
-                format!("{}: {part}", item.key)
+        ChangeKind::Created | ChangeKind::Updated => match item.kind {
+            // Configmap bullets always carry the key's value, even when it is
+            // empty (rendered as `KEY:`), so every configmap line reads
+            // `KEY: value`.
+            FileKind::ConfigMap => {
+                let value = item
+                    .value
+                    .as_deref()
+                    .map(escape_newlines)
+                    .unwrap_or_default();
+                let body = if value.is_empty() {
+                    item.note.clone()
+                } else if item.note.is_empty() {
+                    value
+                } else {
+                    format!("{value} {}", item.note)
+                };
+                if body.is_empty() {
+                    format!("{}:", item.key)
+                } else {
+                    format!("{}: {body}", item.key)
+                }
             }
-        }
+            _ => {
+                let part = value_part(item);
+                if part.is_empty() {
+                    item.key.clone()
+                } else {
+                    format!("{}: {part}", item.key)
+                }
+            }
+        },
         ChangeKind::Deleted => item.key.clone(),
     }
 }
@@ -1155,7 +1183,14 @@ mod tests {
             FileReport {
                 display: "deploy/dev/kubernetes/configmap.yml".into(),
                 kind: FileKind::ConfigMap,
-                items: vec![item(FileKind::ConfigMap, ChangeKind::Created, "DEV_NEW")],
+                items: vec![Item {
+                    kind: FileKind::ConfigMap,
+                    change: ChangeKind::Created,
+                    key: "DEV_NEW".into(),
+                    value: Some("newvalue".into()),
+                    old_value: None,
+                    note: String::new(),
+                }],
             },
             FileReport {
                 display: "deploy/dev/kubernetes/secrets.yml".into(),
@@ -1175,7 +1210,7 @@ mod tests {
 ---
 <strong>Updated</strong>
 
-- DEV_NEW
+- DEV_NEW: newvalue
 
 <strong>Deleted</strong> \x1b[32m(No changes)\x1b[0m
 
@@ -1290,5 +1325,62 @@ mod tests {
         }];
         let md = render_markdown(&files, "dev", "master");
         assert!(md.contains("- MULTI: line1\\nline2"));
+    }
+
+    #[test]
+    fn markdown_configmap_empty_value_still_renders_value() {
+        // A configmap key whose `--from` value is empty (`''`) must still read
+        // `KEY: value`, not a bare key. Secrets keep rendering bare unless a
+        // real configmap value was moved in.
+        let files = vec![
+            FileReport {
+                display: "configmap.yml".into(),
+                kind: FileKind::ConfigMap,
+                items: vec![
+                    Item {
+                        kind: FileKind::ConfigMap,
+                        change: ChangeKind::Created,
+                        key: "EMPTY".into(),
+                        value: Some(String::new()),
+                        old_value: None,
+                        note: String::new(),
+                    },
+                    Item {
+                        kind: FileKind::ConfigMap,
+                        change: ChangeKind::Updated,
+                        key: "FROM_SECRET".into(),
+                        value: Some(String::new()),
+                        old_value: Some("old".into()),
+                        note: "(from secret)".into(),
+                    },
+                ],
+            },
+            FileReport {
+                display: "secrets.yml".into(),
+                kind: FileKind::Secret,
+                items: vec![Item {
+                    kind: FileKind::Secret,
+                    change: ChangeKind::Created,
+                    key: "SECRET_ONLY".into(),
+                    value: None,
+                    old_value: None,
+                    note: String::new(),
+                }],
+            },
+        ];
+        let md = render_markdown(&files, "dev", "master");
+        assert!(
+            md.contains("- EMPTY:"),
+            "empty configmap value renders:\n{md}"
+        );
+        assert!(
+            md.contains("- FROM_SECRET: (from secret)"),
+            "annotated empty configmap value renders:\n{md}"
+        );
+        assert!(md.contains("- SECRET_ONLY"), "secret stays bare:\n{md}");
+        assert!(
+            !md.contains("- SECRET_ONLY:"),
+            "secret must not gain a value:\n{md}"
+        );
     }
 }
