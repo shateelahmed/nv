@@ -35,7 +35,8 @@ an interactive TUI.
   file containing `.example` in its name (e.g., `.env.example`,
   `.env.testing.example`).
 - **Preview & confirm**: see a diff before anything is written; `--dry-run` and
-  `--yes` for automation.
+  `--yes` for automation. Confirmation prompts echo your typed `y`/`n` answer
+  (with the cursor visible) and fall back to the shown default on Enter.
 - **Transparent config source**: every command tells you whether it read from
   `nv.yml` or the command line.
 - **Colorized output**: hierarchical, color-coded output with configurable colors

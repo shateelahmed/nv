@@ -158,3 +158,17 @@ spec under "Post-approval revisions":
       `markdown_marks_empty_labels_no_changes`,
       `markdown_environment_with_no_changes`; verified on `pol-payment-core-ms`
       (all 5 envs render both kinds with merged Updated/Deleted).
+
+### Confirmation prompts echo typed input
+
+Dialoguer's `Confirm` hides the cursor and accepts a bare `y`/`n` keypress, so
+the user never sees what they typed. Replaced every confirmation with a shared
+`context::confirm(prompt, default)` helper that uses a validated `Input`
+(`y`/`yes`/`n`/`no`, case-insensitive; Enter falls back to the default): typed
+characters are echoed with the terminal cursor visible (blinking) at the end of
+the input, and invalid answers re-prompt with an error. Applied consistently to
+all commands with a confirmation prompt: `Apply these changes?` (set/gen/remove/
+leaks --clean/compare --reorder), `Generate a markdown list of changes?`
+(changes), and the wizard's three (`…exists. Overwrite?`, `Create one now?`,
+`Customize which files count as env files per service?`).
+

@@ -7,9 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use dialoguer::{Confirm, Input, MultiSelect};
+use dialoguer::{Input, MultiSelect};
 
 use super::Cli;
+use super::context::confirm;
 use crate::config::{self, Config, ServiceConfig, ServiceFiles};
 use crate::discovery;
 use crate::model::FileKind;
@@ -28,10 +29,10 @@ pub fn run_init(_cli: &Cli) -> Result<()> {
         home_config_path().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
 
     if config_path.exists() {
-        let overwrite = Confirm::new()
-            .with_prompt(format!("{} exists. Overwrite?", config_path.display()))
-            .default(false)
-            .interact()?;
+        let overwrite = confirm(
+            &format!("{} exists. Overwrite?", config_path.display()),
+            false,
+        )?;
         if !overwrite {
             eprintln!("Keeping existing configuration.");
             return Ok(());
@@ -53,10 +54,7 @@ pub fn first_run_if_needed(cwd: &Path) -> Result<Option<PathBuf>> {
     }
 
     eprintln!("No {} found.", config::CONFIG_FILE);
-    let create = Confirm::new()
-        .with_prompt("Create one now?")
-        .default(true)
-        .interact()?;
+    let create = confirm("Create one now?", true)?;
     if !create {
         return Ok(None);
     }
@@ -108,10 +106,10 @@ fn build_interactively(base: &Path) -> Result<Config> {
     let all_selected = selected_idx.len() == names.len();
 
     // 4. Optionally let the user pick exact files per service.
-    let customize_files = Confirm::new()
-        .with_prompt("Customize which files count as env files per service?")
-        .default(false)
-        .interact()?;
+    let customize_files = confirm(
+        "Customize which files count as env files per service?",
+        false,
+    )?;
 
     if all_selected && !customize_files {
         // Minimal config: services_root only, auto-discover the rest.

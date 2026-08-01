@@ -748,12 +748,7 @@ pub fn run(cli: &Cli, from: &str, to: Option<&str>, environment: Option<&str>) -
 
     // Offer a markdown report, defaulting the file name and writing into the
     // service's own root folder.
-    let generate = dialoguer::Confirm::new()
-        .with_prompt("Generate a markdown list of changes?")
-        .default(false)
-        .wait_for_newline(true)
-        .interact()?;
-    if !generate {
+    if !context::confirm("Generate a markdown list of changes?", false)? {
         return Ok(());
     }
 

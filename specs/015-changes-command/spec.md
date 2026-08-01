@@ -427,6 +427,11 @@ bugs that were fixed and folded back into this spec:
    changes share one `Updated` section (secrets' created keys also use
    "Updated"), and every environment/kind/subsection label renders even when
    empty, marked `(No changes)` in green.
+9. **Confirmations echo typed input.** All yes/no confirmations (the markdown
+   prompt, `Apply these changes?`, and the wizard's prompts) use a shared
+   `context::confirm` helper built on a validated text input rather than
+   dialoguer's `Confirm`: the typed `y`/`n` is echoed with a visible, blinking
+   cursor at the end of the input, and Enter accepts the default.
 
 ## Assistant-config sync
 

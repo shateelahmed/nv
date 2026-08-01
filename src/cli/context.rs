@@ -141,20 +141,40 @@ pub fn preview_and_apply(
     }
 
     // Unless `--yes` was passed, require an explicit confirmation.
-    if !cli.yes {
-        let confirmed = dialoguer::Confirm::new()
-            .with_prompt("Apply these changes?")
-            .default(false)
-            .interact()?;
-        if !confirmed {
-            eprintln!("Aborted.");
-            return Ok(());
-        }
+    if !cli.yes && !confirm("Apply these changes?", false)? {
+        eprintln!("Aborted.");
+        return Ok(());
     }
 
     let written = changes.apply()?;
     eprintln!("Wrote {written} file(s).");
     Ok(())
+}
+
+/// Prompt a yes/no confirmation that echoes the user's typed answer with the
+/// terminal cursor visible at the end of the input.
+///
+/// dialoguer's `Confirm` hides the cursor and accepts a bare `y`/`n` keypress,
+/// so the user never sees what they typed. This helper instead uses a text
+/// input (which keeps the cursor visible) and validates it as
+/// `y`/`yes`/`n`/`no` (case-insensitive), re-prompting on invalid answers. An
+/// empty answer (Enter) falls back to `default`.
+pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
+    let default = if default { "yes" } else { "no" };
+    let answer: String = dialoguer::Input::new()
+        .with_prompt(format!("{prompt} (y/n)"))
+        .default(default.to_string())
+        .validate_with(|input: &String| -> Result<(), String> {
+            match input.trim().to_ascii_lowercase().as_str() {
+                "y" | "yes" | "n" | "no" => Ok(()),
+                _ => Err("please answer y/n or yes/no".to_string()),
+            }
+        })
+        .interact_text()?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }
 
 /// Parse a file-kind label into a [`FileKind`].
