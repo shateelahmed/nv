@@ -5,6 +5,7 @@
 //! parser and `--help` text from them automatically. Each `#[arg(...)]` /
 //! `#[command(...)]` attribute configures one flag or subcommand.
 
+mod changes;
 mod compare;
 pub mod context;
 mod duplicates;
@@ -206,6 +207,23 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["values", "order", "comments"])]
         reorder: bool,
     },
+
+    /// List a service's configmap and secrets changes between two branches.
+    Changes {
+        /// Branch holding the new state (required).
+        #[arg(long)]
+        from: String,
+        /// Baseline branch. Defaults to the service's configured master
+        /// branch, or 'master' when not configured.
+        #[arg(long)]
+        to: Option<String>,
+        /// Restrict the scan to one environment folder, matched as a path
+        /// segment (e.g. `dev` for `deploy/dev/kubernetes`). Defaults to the
+        /// service's configured `commands.changes.environment`, or all
+        /// environments when not configured.
+        #[arg(long)]
+        environment: Option<String>,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -269,6 +287,11 @@ pub fn run() -> Result<()> {
             comments,
             reorder,
         }) => compare::run(&cli, file_path, *values, *order, *comments, *reorder),
+        Some(Command::Changes {
+            from,
+            to,
+            environment,
+        }) => changes::run(&cli, from, to.as_deref(), environment.as_deref()),
         None => crate::tui::launch(&cli),
     }
 }

@@ -167,6 +167,7 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv init` | Create/update `nv.yml` via a wizard. |
 | `nv find <query>` | Fuzzy-find a key across all services. |
 | `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
+| `nv changes --service <NAME> --from <BRANCH>` | List a service's configmap/secrets changes between two git branches; optionally write a markdown report. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
 | `nv gen <KEY>` | Generate a secret and set it on a key. |
 
@@ -221,6 +222,20 @@ nv compare .env --reorder --service auth
 
 # Preview the reorder without writing
 nv compare --reorder --dry-run .env --service auth
+
+# List the auth service's configmap/secrets changes between the dev and master
+# branches. --from holds the new state; --to is the baseline and defaults to
+# the configured master branch (commands.changes.master_branch) or 'master'.
+nv changes --service auth --from dev
+
+# Compare against a specific baseline branch, skipping the markdown prompt
+nv changes --service auth --from dev --to release/1.0 --dry-run
+
+# Restrict the scan to one environment folder (matched as a path segment, e.g.
+# `dev` for `deploy/dev/kubernetes`). The markdown report is always segmented
+# by environment (`## dev`, `## prod`, `## qa1`, ...), one section per
+# environment with changes.
+nv changes --service auth --from dev --environment dev
 
 # Preview a change without writing
 nv --dry-run set FEATURE_FLAG on
@@ -290,6 +305,15 @@ secrets:
   SESSION_KEY:
     length: 32
     format: alnum
+
+# Global command configuration. Per-service `commands.changes` can override
+# each value (see nv.yml.example).
+commands:
+  changes:
+    master_branch: main   # baseline for `nv changes` when --to is omitted
+    environment: dev      # optional: restrict the scan to one environment folder
+    skip_files:           # configmap/secrets files excluded from the scan
+      - deploy/secrets.yml
 
 # Color configuration for CLI output (nv find).
 colors:

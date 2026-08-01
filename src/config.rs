@@ -149,6 +149,24 @@ pub struct FindConfig {
     pub skip_files: Vec<String>,
 }
 
+/// Configuration for the `nv changes` command.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChangesConfig {
+    /// Branch name used as the comparison baseline when `--to` is omitted.
+    /// Defaults to `master` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_branch: Option<String>,
+    /// Restrict the branch scan to one environment folder, matched as a path
+    /// segment (e.g. `dev` for `deploy/dev/kubernetes`). The `--environment`
+    /// flag overrides this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    /// Files to exclude from the branch scan, relative to the service root or
+    /// by file name. Glob patterns are supported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_files: Vec<String>,
+}
+
 /// Global command-specific configuration, nested under `commands:` in nv.yml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommandsConfig {
@@ -164,6 +182,9 @@ pub struct CommandsConfig {
     /// Configuration for the `nv find` command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub find: Option<FindConfig>,
+    /// Configuration for the `nv changes` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<ChangesConfig>,
 }
 
 /// The `nv.yml` document — the top-level shape of the whole config file.
@@ -317,6 +338,71 @@ impl Config {
             .and_then(|svc| svc.commands.as_ref())
             .and_then(|cmd| cmd.find.as_ref())
             .map(|find| find.skip_files.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        let mut merged: Vec<&str> = global;
+        for file in per_svc {
+            if !merged.contains(&file) {
+                merged.push(file);
+            }
+        }
+        merged
+    }
+
+    /// Return the effective master branch name for `nv changes` for a service:
+    /// the per-service `commands.changes.master_branch` if set, otherwise the
+    /// global value, otherwise `None` (the caller defaults to `master`).
+    pub fn changes_master_branch_for(&self, service: &str) -> Option<&str> {
+        let per_svc = self
+            .services
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.changes.as_ref())
+            .and_then(|changes| changes.master_branch.as_deref());
+        if per_svc.is_some() {
+            return per_svc;
+        }
+        self.commands
+            .as_ref()
+            .and_then(|cmd| cmd.changes.as_ref())
+            .and_then(|changes| changes.master_branch.as_deref())
+    }
+
+    /// Return the effective environment filter for `nv changes` for a service:
+    /// the per-service `commands.changes.environment` if set, otherwise the
+    /// global value, otherwise `None` (the command scans all environments).
+    pub fn changes_environment_for(&self, service: &str) -> Option<&str> {
+        let per_svc = self
+            .services
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.changes.as_ref())
+            .and_then(|changes| changes.environment.as_deref());
+        if per_svc.is_some() {
+            return per_svc;
+        }
+        self.commands
+            .as_ref()
+            .and_then(|cmd| cmd.changes.as_ref())
+            .and_then(|changes| changes.environment.as_deref())
+    }
+
+    /// Return the merged list of files to skip for `nv changes` for a service —
+    /// global list plus per-service list, deduplicated.
+    pub fn changes_skip_files_for(&self, service: &str) -> Vec<&str> {
+        let global: Vec<&str> = self
+            .commands
+            .as_ref()
+            .and_then(|cmd| cmd.changes.as_ref())
+            .map(|changes| changes.skip_files.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        let per_svc: Vec<&str> = self
+            .services
+            .get(service)
+            .and_then(|svc| svc.commands.as_ref())
+            .and_then(|cmd| cmd.changes.as_ref())
+            .map(|changes| changes.skip_files.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default();
 
         let mut merged: Vec<&str> = global;
@@ -658,6 +744,163 @@ services:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         let files = config.find_skip_files_for("auth");
         assert_eq!(files, vec!["docker/.env", ".env.testing.example"]);
+    }
+
+    #[test]
+    fn changes_master_branch_defaults_to_none() {
+        let yaml = r#"
+services_root: .
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.changes_master_branch_for("any").is_none());
+    }
+
+    #[test]
+    fn changes_master_branch_global_only() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    master_branch: main
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.changes_master_branch_for("any-service"),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn changes_master_branch_per_service_overrides_global() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    master_branch: main
+services:
+  auth:
+    commands:
+      changes:
+        master_branch: production
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.changes_master_branch_for("auth"), Some("production"));
+        assert_eq!(
+            config.changes_master_branch_for("other"),
+            Some("main"),
+            "services without an override use the global value"
+        );
+    }
+
+    #[test]
+    fn changes_environment_defaults_to_none() {
+        let yaml = r#"
+services_root: .
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.changes_environment_for("any").is_none());
+    }
+
+    #[test]
+    fn changes_environment_global_only() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    environment: dev
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.changes_environment_for("any-service"), Some("dev"));
+    }
+
+    #[test]
+    fn changes_environment_per_service_overrides_global() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    environment: dev
+services:
+  auth:
+    commands:
+      changes:
+        environment: prod
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.changes_environment_for("auth"), Some("prod"));
+        assert_eq!(
+            config.changes_environment_for("other"),
+            Some("dev"),
+            "services without an override use the global value"
+        );
+    }
+
+    #[test]
+    fn changes_skip_files_empty_when_not_configured() {
+        let yaml = r#"
+services_root: .
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let files: Vec<&str> = config.changes_skip_files_for("any");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn changes_skip_files_global_only() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    skip_files:
+      - deploy/secrets.yml
+      - "*.local.yml"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let files = config.changes_skip_files_for("any-service");
+        assert_eq!(files, vec!["deploy/secrets.yml", "*.local.yml"]);
+    }
+
+    #[test]
+    fn changes_skip_files_per_service_only() {
+        let yaml = r#"
+services_root: .
+services:
+  auth:
+    commands:
+      changes:
+        skip_files:
+          - configmap.local.yml
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.changes_skip_files_for("auth"),
+            vec!["configmap.local.yml"]
+        );
+        let other: Vec<&str> = config.changes_skip_files_for("other");
+        assert!(other.is_empty());
+    }
+
+    #[test]
+    fn changes_skip_files_global_and_per_service_merge() {
+        let yaml = r#"
+services_root: .
+commands:
+  changes:
+    skip_files:
+      - deploy/secrets.yml
+services:
+  auth:
+    commands:
+      changes:
+        skip_files:
+          - deploy/secrets.yml
+          - configmap.local.yml
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.changes_skip_files_for("auth"),
+            vec!["deploy/secrets.yml", "configmap.local.yml"]
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod config; // reading/writing the `nv.yml` config file
 mod discovery; // finding services and their env files on disk
 mod display; // shared hierarchical tree rendering
 mod edit; // building, previewing (diffing), and applying file changes
+mod git; // reading file contents and refs from the git CLI
 mod model; // shared data types used everywhere
 mod parser; // reading/editing .env and YAML files without losing formatting
 mod search; // fuzzy searching keys

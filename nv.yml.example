@@ -58,6 +58,11 @@ services_root: ./services
 # `commands.compare.skip_files` are excluded from `nv compare` within that
 # service (glob patterns allowed).  Files listed in `commands.find.skip_files`
 # are excluded from `nv find` within that service (glob patterns allowed).
+# `commands.changes.master_branch` overrides the baseline branch used by
+# `nv changes` when `--to` is omitted; `commands.changes.environment`
+# restricts the scan to one environment folder (matched as a path segment,
+# e.g. `dev` for `deploy/dev/kubernetes`); `commands.changes.skip_files`
+# excludes files from the branch scan (glob patterns allowed).
 #
 # services:
 #   auth:
@@ -80,6 +85,11 @@ services_root: ./services
 #       find:
 #         skip_files:
 #           - docker/.env
+#       changes:
+#         master_branch: master
+#         environment: dev
+#         skip_files:
+#           - configmap.local.yml
 
 # ─── Secret generation presets ───────────────────────────────────────────────
 # Per-key overrides for `nv generate`.  Each entry maps a key name to a
@@ -136,6 +146,19 @@ services_root: ./services
 #     skip_files:
 #       - docker/.env
 #       - "*.example.env"
+#   # `commands.changes.master_branch` is the baseline branch `nv changes` uses
+#   # when `--to` is omitted (per-service value overrides this; default `master`).
+#   # `commands.changes.environment` restricts the scan to one environment
+#   # folder, matched as a path segment (e.g. `dev` for
+#   # `deploy/dev/kubernetes`); the `--environment` flag overrides it.
+#   # `commands.changes.skip_files` excludes configmap/secrets files from the
+#   # branch scan.  Entries match the path relative to the service root and the
+#   # bare file name.  Glob patterns (`*`, `**`, `?`) are supported.
+#   changes:
+#     master_branch: main
+#     environment: dev
+#     skip_files:
+#       - deploy/secrets.yml
 
 # ─── Color configuration ────────────────────────────────────────────────────
 # Customise ANSI colors for CLI output.  Available color names:
