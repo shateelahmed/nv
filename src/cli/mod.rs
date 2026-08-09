@@ -77,6 +77,14 @@ pub enum Command {
         /// Search query (matches service, key, and file name).
         #[arg(default_value = "")]
         query: String,
+        /// Treat QUERY as a literal keyword: only keys whose whole name equals
+        /// QUERY (case-insensitive).
+        #[arg(long, conflicts_with = "pattern")]
+        exact: bool,
+        /// Treat QUERY as a glob pattern matched against the key name
+        /// (case-insensitive). Same syntax as commands.find.skip_files.
+        #[arg(long, value_name = "GLOB")]
+        pattern: Option<String>,
     },
 
     /// Set a key to a value across the selected services and files.
@@ -254,7 +262,11 @@ pub fn run() -> Result<()> {
 
     match &cli.command {
         Some(Command::Init) => wizard::run_init(&cli),
-        Some(Command::Find { query }) => find::run(&cli, query),
+        Some(Command::Find {
+            query,
+            exact,
+            pattern,
+        }) => find::run(&cli, query, *exact, pattern.as_deref()),
         Some(Command::Set { key, value }) => set::run(&cli, key, value),
         Some(Command::Gen {
             key,

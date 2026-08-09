@@ -271,6 +271,24 @@ auth/
       LOG_LEVEL =
 ```
 
+`nv find` searches with fuzzy matching by default and offers two stricter modes:
+
+| Option | Description |
+| --- | --- |
+| `--exact` | Treat the query as a literal keyword: only keys whose whole name equals the query (case-insensitive) match. |
+| `--pattern <GLOB>` | Treat the query as a glob pattern matched against the key name (case-insensitive). Same syntax as `commands.find.skip_files` (`*`, `**`, `?`). |
+
+```sh
+# Exact whole-key match: only keys literally named DATABASE_URL
+nv find --exact DATABASE_URL
+
+# Glob match: every key starting with DB_
+nv find --pattern 'DB_*'
+
+# Combine with -s scoping
+nv find -s auth --pattern '*_URL'
+```
+
 ## Configuration (`nv.yml`)
 
 `nv` looks for `nv.yml` in the current directory (walking upward). Every subfolder

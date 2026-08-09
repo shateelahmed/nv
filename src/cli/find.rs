@@ -11,8 +11,9 @@ use crate::model::{EnvKey, Service};
 use crate::search;
 
 /// Handle `nv find <query>`: print every key that fuzzy-matches the query
-/// in a hierarchical, colorized format.
-pub fn run(cli: &Cli, query: &str) -> Result<()> {
+/// in a hierarchical, colorized format. `--exact` matches whole key names and
+/// `--pattern` glob-matches key names instead of fuzzy matching.
+pub fn run(cli: &Cli, query: &str, exact: bool, pattern: Option<&str>) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(ctx.source);
 
@@ -42,7 +43,16 @@ pub fn run(cli: &Cli, query: &str) -> Result<()> {
     }
 
     let index = search::build_index(&services);
-    let results = search::search(&index, query);
+    // The matching mode is chosen by the flags: `--exact` requires the whole
+    // key name, `--pattern` glob-matches the key name, and the default fuzzy
+    // match is unchanged.
+    let results = if exact {
+        search::search_exact(&index, query)
+    } else if let Some(pattern) = pattern {
+        search::search_glob(&index, pattern)?
+    } else {
+        search::search(&index, query)
+    };
 
     if results.is_empty() {
         eprintln!("No matches.");

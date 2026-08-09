@@ -6,6 +6,8 @@
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
+use anyhow::Result;
+
 use crate::model::{EnvKey, Service};
 use crate::parser;
 
@@ -74,6 +76,39 @@ pub fn search<'a>(index: &'a [EnvKey], query: &str) -> Vec<&'a EnvKey> {
     let mut matched = pattern.match_list(haystacks, &mut matcher);
     // `match_list` already sorts by score descending; map back to entries.
     matched.drain(..).map(|(h, _score)| &index[h.idx]).collect()
+}
+
+/// Exact-match `index` for `query`: a key matches only when its whole name
+/// equals the query (ASCII case-insensitive). Unlike [`search`], there is no
+/// substring or fuzzy matching. Results keep index order; an empty query
+/// returns everything unchanged.
+pub fn search_exact<'a>(index: &'a [EnvKey], query: &str) -> Vec<&'a EnvKey> {
+    if query.trim().is_empty() {
+        return index.iter().collect();
+    }
+    index
+        .iter()
+        .filter(|k| k.key.eq_ignore_ascii_case(query))
+        .collect()
+}
+
+/// Glob-match `index` for `query`, using the same syntax as
+/// `commands.find.skip_files` (`*`/`**`/`?`). The pattern is matched against
+/// the whole key name, ASCII case-insensitively (the `glob` crate has no
+/// case-insensitive mode, so both sides are lowercased). Results keep index
+/// order; an empty query returns everything unchanged. Returns `Err` for an
+/// invalid glob pattern.
+pub fn search_glob<'a>(index: &'a [EnvKey], query: &str) -> Result<Vec<&'a EnvKey>> {
+    if query.trim().is_empty() {
+        return Ok(index.iter().collect());
+    }
+    let lowered = query.to_ascii_lowercase();
+    let pattern = glob::Pattern::new(&lowered)
+        .map_err(|e| anyhow::anyhow!("invalid pattern '{query}': {e}"))?;
+    Ok(index
+        .iter()
+        .filter(|k| pattern.matches(&k.key.to_ascii_lowercase()))
+        .collect())
 }
 
 /// Return the distinct set of keys in the index, sorted, for key-oriented
@@ -145,5 +180,83 @@ mod tests {
             distinct_keys(&index),
             vec!["SHARED".to_string(), "X".to_string()]
         );
+    }
+
+    #[test]
+    fn exact_matches_whole_key() {
+        let index = vec![
+            key("auth", "DATABASE_URL"),
+            key("billing", "API_DATABASE_URL"),
+            key("billing", "API_KEY"),
+        ];
+        let results = search_exact(&index, "DATABASE_URL");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "DATABASE_URL");
+    }
+
+    #[test]
+    fn exact_is_case_insensitive() {
+        let index = vec![key("auth", "DATABASE_URL"), key("auth", "API_KEY")];
+        let results = search_exact(&index, "database_url");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "DATABASE_URL");
+    }
+
+    #[test]
+    fn exact_does_not_substring_match() {
+        let index = vec![key("auth", "DATABASE_URL")];
+        assert!(search_exact(&index, "URL").is_empty());
+    }
+
+    #[test]
+    fn exact_empty_query_returns_all() {
+        let index = vec![key("auth", "A"), key("auth", "B")];
+        assert_eq!(search_exact(&index, "").len(), 2);
+    }
+
+    #[test]
+    fn glob_matches_prefix() {
+        let index = vec![
+            key("auth", "DB_HOST"),
+            key("auth", "DB_PORT"),
+            key("billing", "REDIS_URL"),
+        ];
+        let results = search_glob(&index, "DB_*").unwrap();
+        let keys: Vec<&str> = results.iter().map(|k| k.key.as_str()).collect();
+        assert_eq!(keys, vec!["DB_HOST", "DB_PORT"]);
+    }
+
+    #[test]
+    fn glob_matches_suffix() {
+        let index = vec![key("auth", "DATABASE_URL"), key("auth", "API_KEY")];
+        let results = search_glob(&index, "*_URL").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "DATABASE_URL");
+    }
+
+    #[test]
+    fn glob_is_case_insensitive() {
+        let index = vec![key("auth", "DB_HOST"), key("auth", "REDIS_URL")];
+        let results = search_glob(&index, "db_*").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "DB_HOST");
+    }
+
+    #[test]
+    fn glob_star_matches_all() {
+        let index = vec![key("auth", "DB_HOST"), key("auth", "REDIS_URL")];
+        assert_eq!(search_glob(&index, "*").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn glob_empty_query_returns_all() {
+        let index = vec![key("auth", "A"), key("auth", "B")];
+        assert_eq!(search_glob(&index, "").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn glob_invalid_pattern_errors() {
+        let index = vec![key("auth", "A")];
+        assert!(search_glob(&index, "[").is_err());
     }
 }
