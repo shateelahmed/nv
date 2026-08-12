@@ -410,7 +410,7 @@ fn build_clean_changes(unused_keys: &[KeyLocation], services: &[Service]) -> Res
 /// Handle `nv unused`: list env keys not referenced in the codebase.
 pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let skip_dirs = build_skip_dirs(
         &ctx.config

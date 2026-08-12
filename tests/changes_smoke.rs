@@ -154,7 +154,9 @@ fn default_to_uses_configured_master_branch() {
     );
     assert!(out.status.success(), "failed:\n{}", stderr(&out));
     let err = stderr(&out);
-    assert!(err.contains("Config source: nv.yml"));
+    // The child resolves the /var symlink (macOS), so canonicalize both sides.
+    let expected = std::fs::canonicalize(root.join("nv.yml")).unwrap();
+    assert!(err.contains(&format!("Config source: {}", expected.display())));
     assert!(err.contains("7 change(s) found between 'dev' and 'main'."));
 }
 
@@ -453,7 +455,9 @@ fn environment_config_filters_to_one_folder() {
     let text = stdout(&out);
     assert!(text.contains("+ DEV_KEY = devnew"));
     assert!(!text.contains("PROD_KEY"), "prod filtered out:\n{text}");
-    assert!(stderr(&out).contains("Config source: nv.yml"));
+    // The child resolves the /var symlink (macOS), so canonicalize both sides.
+    let expected = std::fs::canonicalize(root.join("nv.yml")).unwrap();
+    assert!(stderr(&out).contains(&format!("Config source: {}", expected.display())));
 }
 
 #[test]

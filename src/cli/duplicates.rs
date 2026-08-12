@@ -31,7 +31,7 @@ struct DuplicateKey {
 /// Handle `nv duplicates`: list env keys that appear multiple times.
 pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let service_filter = ctx.service_filter(cli);
 

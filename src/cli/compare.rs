@@ -461,7 +461,7 @@ pub fn run(
     }
 
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let service_filter: Vec<&str> = if cli.all || cli.services.is_empty() {
         Vec::new()

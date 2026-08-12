@@ -27,7 +27,6 @@ pub struct Context {
     /// All discovered services and their files.
     pub services: Vec<Service>,
     /// Directory paths are resolved against (config dir or working dir).
-    #[allow(dead_code)]
     pub base: PathBuf,
 }
 
@@ -110,9 +109,16 @@ pub fn resolve(cli: &Cli) -> Result<Context> {
     }
 }
 
-/// Print the standard config-source banner.
-pub fn print_banner(source: ConfigSource) {
-    eprintln!("{}", source.banner());
+/// Print the standard config-source banner, including the full path to the
+/// `nv.yml` that was loaded (command-line mode has no path).
+pub fn print_banner(ctx: &Context) {
+    match ctx.source {
+        ConfigSource::NvYml => {
+            let path = ctx.base.join(CONFIG_FILE);
+            eprintln!("Config source: {}", path.display());
+        }
+        ConfigSource::CommandLine => eprintln!("Config source: command-line"),
+    }
 }
 
 /// Preview a change set and, unless `--dry-run`, apply it (prompting for

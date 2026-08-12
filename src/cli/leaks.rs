@@ -67,7 +67,7 @@ type LeakMap<'a> = BTreeMap<&'a str, BTreeMap<&'a str, Vec<(&'a str, &'a str)>>>
 /// - `--false-alarm <KEY>`: mark a key as a false alarm (saved to nv.yml).
 pub fn run(cli: &Cli, clean: bool, false_alarm: &Option<String>) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let service_filter = ctx.service_filter(cli);
 

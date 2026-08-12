@@ -20,7 +20,7 @@ pub fn run(
     unique: bool,
 ) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let service_filter = ctx.service_filter(cli);
     let kind_filter = ctx.kind_filter(cli)?;

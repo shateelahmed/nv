@@ -117,7 +117,7 @@ fn run_transform(
     transform_fn: fn(&str, &str) -> Result<String>,
 ) -> Result<()> {
     let ctx = super::context::resolve(cli)?;
-    super::context::print_banner(ctx.source);
+    super::context::print_banner(&ctx);
 
     let target_file = crate::model::find_target(&ctx.services, service_name, file_path)?;
     let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();

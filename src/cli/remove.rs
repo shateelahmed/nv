@@ -35,7 +35,7 @@ pub fn run(
     }
 
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     // Build the kind filter from the file type flags.
     // When -s is present without -e/-c/-x, target all file types.

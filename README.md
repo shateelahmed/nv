@@ -355,7 +355,7 @@ Colors are automatically disabled when:
 
 Use `--no-config` on any command to ignore `nv.yml` and rely purely on
 `--root` / `--service` / `--file`. The active source is always printed as
-`Config source: nv.yml` or `Config source: command-line`.
+`Config source: /full/path/nv.yml` or `Config source: command-line`.
 
 ## TUI flow
 

@@ -667,7 +667,7 @@ fn in_environment(display: &str, env: &str) -> bool {
 /// [--environment ENV]`.
 pub fn run(cli: &Cli, from: &str, to: Option<&str>, environment: Option<&str>) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     let service = selected_service(cli, &ctx.services)?;
 

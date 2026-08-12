@@ -115,15 +115,6 @@ pub enum ConfigSource {
     CommandLine,
 }
 
-impl ConfigSource {
-    pub fn banner(self) -> &'static str {
-        match self {
-            ConfigSource::NvYml => "Config source: nv.yml",
-            ConfigSource::CommandLine => "Config source: command-line",
-        }
-    }
-}
-
 /// Find an [`EnvFile`] by service name and display path.
 ///
 /// This is used by multiple commands (encrypt, decrypt, unused) to resolve

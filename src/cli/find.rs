@@ -15,7 +15,7 @@ use crate::search;
 /// `--pattern` glob-matches key names instead of fuzzy matching.
 pub fn run(cli: &Cli, query: &str, exact: bool, pattern: Option<&str>) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     // `--service`/`-s` scopes the search to the named services.
     let service_filter = ctx.service_filter(cli);

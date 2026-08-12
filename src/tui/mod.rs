@@ -40,7 +40,7 @@ pub fn launch(cli: &Cli) -> Result<()> {
     }
 
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     if ctx.services.is_empty() {
         bail!("no services found; run `nv init` or use --root <dir>");

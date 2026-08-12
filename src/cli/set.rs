@@ -9,7 +9,7 @@ use crate::edit::{self, ChangeSet};
 /// Handle `nv set <KEY> <VALUE>`: write the same value to every selected target.
 pub fn run(cli: &Cli, key: &str, value: &str) -> Result<()> {
     let ctx = context::resolve(cli)?;
-    context::print_banner(ctx.source);
+    context::print_banner(&ctx);
 
     // Which services and file kinds to touch (empty = all).
     let service_filter = ctx.service_filter(cli);
