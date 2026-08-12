@@ -1,7 +1,7 @@
 # Spec: `nv encrypt` and `nv decrypt` commands
 
 - **ID:** 007-encrypt-decrypt-command
-- **Status:** Proposed
+- **Status:** Implemented
 - **Author:** shateel
 - **Date:** 2026-07-26
 
@@ -162,3 +162,25 @@ Both commands use global flags: `--service`, `--file`, `--dry-run`, `--yes`,
   changes?
 - Should we support a `--force` flag to encrypt/decrypt already
   encrypted/decrypted files?
+
+## Post-approval revisions
+
+The shipped implementation differs from the original proposal in two ways,
+and later gained one formatting behavior:
+
+1. **Whole-file encryption.** The commands encrypt/decrypt the entire file as
+   a single `ENC[base64(nonce+ciphertext)]` blob, not per-value in place.
+2. **Trailing-newline tolerance.** A `.env.example` may end with a newline
+   after the `ENC[...]` token (e.g. added by an editor); `nv decrypt` strips
+   surrounding whitespace to find the token, so the file decrypts regardless.
+3. **Unix file format.** `nv encrypt` always writes a trailing newline after
+   the `ENC[...]` token. `nv decrypt` preserves the file's trailing whitespace
+   but never duplicates the terminating newline, so encrypt→decrypt is a byte
+   -for-byte round-trip for content that ends with a newline (and yields a
+   single trailing newline otherwise).
+
+## Assistant-config sync
+
+No assistant-config change is required. This revision is a file-format detail
+of one command and introduces no cross-cutting rule, convention, workflow
+step, or project guarantee.

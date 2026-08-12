@@ -28,7 +28,8 @@ fn derive_key(password: &str) -> [u8; 32] {
     key
 }
 
-/// Encrypt plaintext, returning `ENC[base64(nonce+ciphertext)]`.
+/// Encrypt plaintext, returning `ENC[base64(nonce+ciphertext)]` followed by a
+/// trailing newline so the written file follows the Unix text-file format.
 fn encrypt_content(plaintext: &str, password: &str) -> Result<String> {
     if plaintext.is_empty() {
         return Ok(String::new());
@@ -49,7 +50,7 @@ fn encrypt_content(plaintext: &str, password: &str) -> Result<String> {
     combined.extend_from_slice(&ciphertext);
 
     Ok(format!(
-        "{}{}{}",
+        "{}{}{}\n",
         ENCRYPTED_PREFIX,
         BASE64.encode(&combined),
         ENCRYPTED_SUFFIX
@@ -62,7 +63,13 @@ fn decrypt_content(value: &str, password: &str) -> Result<String> {
         return Ok(String::new());
     }
 
-    let Some(encoded) = value
+    // The file may end with a trailing newline; strip surrounding whitespace
+    // so the `ENC[...]` token is found, then re-append it to the plaintext so
+    // the file keeps its original formatting.
+    let trimmed = value.trim_end_matches(char::is_whitespace);
+    let trailing_ws = &value[trimmed.len()..];
+
+    let Some(encoded) = trimmed
         .strip_prefix(ENCRYPTED_PREFIX)
         .and_then(|s| s.strip_suffix(ENCRYPTED_SUFFIX))
     else {
@@ -87,8 +94,17 @@ fn decrypt_content(value: &str, password: &str) -> Result<String> {
         .decrypt(nonce, ciphertext)
         .map_err(|e| anyhow::anyhow!("decryption failed (wrong key?): {e}"))?;
 
-    String::from_utf8(plaintext)
-        .map_err(|e| anyhow::anyhow!("decrypted content is not valid UTF-8: {e}"))
+    let plaintext = String::from_utf8(plaintext)
+        .map_err(|e| anyhow::anyhow!("decrypted content is not valid UTF-8: {e}"))?;
+
+    // Re-append the file's trailing whitespace unless the decrypted content
+    // already ends with a newline. Encrypt always writes a trailing newline,
+    // and re-adding it here would double it on round-trip.
+    if trailing_ws.is_empty() || plaintext.ends_with('\n') {
+        Ok(plaintext)
+    } else {
+        Ok(plaintext + trailing_ws)
+    }
 }
 
 /// Shared runner for encrypt/decrypt — resolves the target file, reads it,
@@ -143,14 +159,32 @@ mod tests {
     #[test]
     fn encrypt_decrypt_roundtrip() {
         let password = "test-password-123";
-        let original = "hello world";
+        let original = "hello world\n";
         let encrypted = encrypt_content(original, password).unwrap();
         assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
-        assert!(encrypted.ends_with(ENCRYPTED_SUFFIX));
+        assert!(encrypted.trim_end().ends_with(ENCRYPTED_SUFFIX));
+        assert!(encrypted.ends_with('\n'));
         assert_ne!(encrypted, original);
 
         let decrypted = decrypt_content(&encrypted, password).unwrap();
         assert_eq!(decrypted, original);
+    }
+
+    #[test]
+    fn encrypt_always_appends_trailing_newline() {
+        let encrypted = encrypt_content("hello world", "key").unwrap();
+        assert!(encrypted.trim_end().ends_with(ENCRYPTED_SUFFIX));
+        assert!(encrypted.ends_with('\n'));
+    }
+
+    #[test]
+    fn decrypt_roundtrip_content_without_newline_gains_one() {
+        // Encrypt always writes a trailing newline, so decrypting content that
+        // originally had none yields it with a single trailing newline (Unix
+        // text-file format).
+        let encrypted = encrypt_content("hello world", "key").unwrap();
+        let decrypted = decrypt_content(&encrypted, "key").unwrap();
+        assert_eq!(decrypted, "hello world\n");
     }
 
     #[test]
@@ -200,5 +234,40 @@ mod tests {
         let encrypted = encrypt_content(content, "key").unwrap();
         let decrypted = decrypt_content(&encrypted, "key").unwrap();
         assert_eq!(decrypted, content);
+    }
+
+    #[test]
+    fn decrypt_tolerates_extra_trailing_blank_line() {
+        // An editor may append a blank line after the ENC token; the token is
+        // still found and the original content keeps its own terminating
+        // newline without it being duplicated.
+        let encrypted = encrypt_content("hello world\n", "key").unwrap();
+        let file = format!("{encrypted}\n");
+        let decrypted = decrypt_content(&file, "key").unwrap();
+        assert_eq!(decrypted, "hello world\n");
+    }
+
+    #[test]
+    fn decrypt_preserves_file_newlines_when_content_has_none() {
+        // When the original content had no trailing newline, the file's
+        // trailing newlines are formatting and are preserved as-is.
+        let encrypted = encrypt_content("hello world", "key").unwrap();
+        let file = format!("{encrypted}\n");
+        let decrypted = decrypt_content(&file, "key").unwrap();
+        assert_eq!(decrypted, "hello world\n\n");
+    }
+
+    #[test]
+    fn decrypt_tolerates_crlf_ending() {
+        let encrypted = encrypt_content("hello world", "key").unwrap();
+        let crlf_file = format!("{}\r\n", encrypted.trim_end_matches('\n'));
+        let decrypted = decrypt_content(&crlf_file, "key").unwrap();
+        assert_eq!(decrypted, "hello world\r\n");
+    }
+
+    #[test]
+    fn decrypt_non_encrypted_passthrough_keeps_trailing_newline() {
+        let decrypted = decrypt_content("plain-text\n", "key").unwrap();
+        assert_eq!(decrypted, "plain-text\n");
     }
 }
