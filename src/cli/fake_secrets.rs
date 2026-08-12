@@ -58,7 +58,6 @@ fn is_placeholder(value: &str) -> bool {
             | "change-me"
             | "placeholder"
             | "dummy"
-            | "test"
             | "example"
             | "fake"
             | "secret"
@@ -293,7 +292,6 @@ mod tests {
     fn placeholder_other_patterns() {
         assert!(is_placeholder("placeholder"));
         assert!(is_placeholder("dummy"));
-        assert!(is_placeholder("test"));
         assert!(is_placeholder("example"));
         assert!(is_placeholder("fake"));
         assert!(is_placeholder("secret"));
@@ -313,6 +311,10 @@ mod tests {
         assert!(!is_placeholder("hello world"));
         assert!(!is_placeholder("xx"));
         assert!(!is_placeholder("ab"));
+        // "test" is a legitimate config value (e.g. a description), not a
+        // placeholder.
+        assert!(!is_placeholder("test"));
+        assert!(!is_placeholder("TEST"));
     }
 
     #[test]

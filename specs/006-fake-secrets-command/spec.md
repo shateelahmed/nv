@@ -78,7 +78,6 @@ There are two categories of fake secrets:
     - `changeme`, `change_me`, `change-me`
     - `placeholder`
     - `dummy`
-    - `test`
     - `example`
     - `fake`
     - `secret` (literal value)
@@ -198,3 +197,16 @@ Uses global flags: `--service`, `--file`, `--no-config`, `--root`, `--all`.
   values?
 - Should there be a configurable list of placeholder patterns in `nv.yml`?
 - Should the placeholder pattern matching be configurable per-service?
+
+## Post-approval revisions
+
+1. **`test` is no longer a placeholder value.** Real configmaps legitimately
+   hold `test` (e.g. `DESCRIPTION: test`,
+   `TITLE: test`), so bare `test`
+   caused false positives and was removed from the placeholder list.
+
+## Assistant-config sync
+
+No assistant-config change is required. This revision refines one command's
+detection heuristics and introduces no cross-cutting rule, convention,
+workflow step, or project guarantee.
