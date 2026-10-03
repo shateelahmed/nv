@@ -14,6 +14,7 @@ mod fake_secrets;
 mod find;
 mod generate;
 mod leaks;
+mod ls;
 mod remove;
 mod set;
 mod unused;
@@ -232,6 +233,22 @@ pub enum Command {
         #[arg(long)]
         environment: Option<String>,
     },
+
+    /// List all unique env keys for a service and environment.
+    Ls {
+        /// Environment to scope configmap/secrets to (e.g. dev, prod, qa1).
+        #[arg(short = 'e', long = "environment")]
+        environment: String,
+        /// Print all keys on a single line separated by spaces.
+        #[arg(long)]
+        flat: bool,
+        /// Only list keys from secrets files.
+        #[arg(long, conflicts_with = "configmap")]
+        secrets: bool,
+        /// Only list keys from configmap files.
+        #[arg(long, conflicts_with = "secrets")]
+        configmap: bool,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -304,6 +321,12 @@ pub fn run() -> Result<()> {
             to,
             environment,
         }) => changes::run(&cli, from, to.as_deref(), environment.as_deref()),
+        Some(Command::Ls {
+            environment,
+            flat,
+            secrets,
+            configmap,
+        }) => ls::run(&cli, environment, *flat, *secrets, *configmap),
         None => crate::tui::launch(&cli),
     }
 }
