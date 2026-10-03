@@ -167,6 +167,19 @@ pub struct ChangesConfig {
     pub skip_files: Vec<String>,
 }
 
+/// Configuration for the `nv missing` command.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MissingConfig {
+    /// Additional directories to skip when scanning source code for env key
+    /// references. Merged with the built-in defaults (`.git`, `target`,
+    /// `vendor`, `node_modules`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_dirs: Vec<String>,
+    /// Files to skip when scanning source code for env key references.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_files: Vec<String>,
+}
+
 /// Global command-specific configuration, nested under `commands:` in nv.yml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommandsConfig {
@@ -185,6 +198,9 @@ pub struct CommandsConfig {
     /// Configuration for the `nv changes` command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changes: Option<ChangesConfig>,
+    /// Configuration for the `nv missing` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<MissingConfig>,
 }
 
 /// The `nv.yml` document — the top-level shape of the whole config file.

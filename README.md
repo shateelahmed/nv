@@ -168,6 +168,7 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv init` | Create/update `nv.yml` via a wizard. |
 | `nv find <query>` | Fuzzy-find a key across all services. |
 | `nv ls -s <SERVICE> -e <ENV>` | List all unique env keys for a service and environment (configmap, secrets, Dockerfile). Use `-e local` to include `.env` files. Filter with `--secrets` or `--configmap`. |
+| `nv missing [-e <ENV>]` | Find env keys referenced in code (PHP `env()`/`getenv()`, JS `process.env`) but missing from configmap/secrets. Without `-e`, reports missing keys per environment. |
 | `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
 | `nv changes --service <NAME> --from <BRANCH>` | List a service's configmap/secrets changes between two git branches; optionally write a markdown report. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
@@ -217,6 +218,12 @@ nv ls -s auth -e dev --configmap
 
 # Print all keys on a single line
 nv ls -s auth -e dev --flat
+
+# Find env keys used in code but missing from the dev configmap/secrets
+nv missing -s auth -e dev
+
+# Scan every service, every environment
+nv missing --all
 
 # Set the same DB URL in every service's .env and configmap
 nv set DATABASE_URL postgres://db:5432/app

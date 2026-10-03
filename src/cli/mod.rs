@@ -15,6 +15,7 @@ mod find;
 mod generate;
 mod leaks;
 mod ls;
+mod missing;
 mod remove;
 mod set;
 mod unused;
@@ -249,6 +250,14 @@ pub enum Command {
         #[arg(long, conflicts_with = "secrets")]
         configmap: bool,
     },
+
+    /// Find env keys used in code but missing from configmap/secrets.
+    Missing {
+        /// Environment to check against (e.g. dev, prod, qa1). When omitted,
+        /// report missing keys for every environment.
+        #[arg(short = 'e', long = "environment")]
+        environment: Option<String>,
+    },
 }
 
 /// CLI mirror of [`SecretFormat`].
@@ -327,6 +336,7 @@ pub fn run() -> Result<()> {
             secrets,
             configmap,
         }) => ls::run(&cli, environment, *flat, *secrets, *configmap),
+        Some(Command::Missing { environment }) => missing::run(&cli, environment.as_deref()),
         None => crate::tui::launch(&cli),
     }
 }
