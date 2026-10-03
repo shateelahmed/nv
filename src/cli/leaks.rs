@@ -13,6 +13,14 @@ use crate::display::{self, Output, TreeFile, TreeItem, TreeService};
 use crate::edit::{self, ChangeSet};
 use crate::model::FileKind;
 
+/// The key-name shape that `nv leaks` treats as sensitive.
+///
+/// This is the single source of truth for "looks like a secret": `leak_pattern`
+/// embeds it so line matching and the bare-name predicate used by `nv encode` /
+/// `nv decode` can never drift apart.
+const SENSITIVE_KEY_NAME: &str =
+    r"[A-Za-z0-9_][A-Z0-9_]+_(?:KEY|PASSWORD|SECRET|TOKEN|ID|USERNAME)";
+
 /// Regex matching keys that suggest hardcoded secrets in dotenv/YAML files.
 ///
 /// Matches lines like:
@@ -26,10 +34,24 @@ use crate::model::FileKind;
 /// character.
 fn leak_pattern() -> Regex {
     // The `(?m)` flag makes `^` and `$` match line boundaries.
-    Regex::new(
-        r"(?m)^\s*(?:export\s+)?([A-Za-z0-9_][A-Z0-9_]+_(?:KEY|PASSWORD|SECRET|TOKEN|ID|USERNAME))[^\S\n]*(?::\s*(.+)|=[^\S\n]*(\S.*))$",
-    )
+    Regex::new(&format!(
+        r"(?m)^\s*(?:export\s+)?({SENSITIVE_KEY_NAME})[^\S\n]*(?::\s*(.+)|=[^\S\n]*(\S.*))$"
+    ))
     .expect("hardcoded regex is valid")
+}
+
+/// Whether a bare key name looks sensitive, by the built-in pattern or by being
+/// listed in `special_keys`.
+///
+/// This is the criterion `nv encode` uses. Unlike [`leak_pattern`] it inspects
+/// only the name, never the value, so an empty-valued `JWT_SECRET=` still counts.
+pub fn is_sensitive_key_name(name: &str, special_keys: &[&str]) -> bool {
+    if special_keys.contains(&name) {
+        return true;
+    }
+    Regex::new(&format!(r"^(?:{SENSITIVE_KEY_NAME})$"))
+        .expect("hardcoded regex is valid")
+        .is_match(name)
 }
 
 /// Build a regex that matches any of the given special secret keys.
@@ -454,5 +476,54 @@ mod tests {
             .map(|cap| cap[1].to_string())
             .collect();
         assert_eq!(keys, vec!["API_KEY"]);
+    }
+
+    #[test]
+    fn recognizes_builtin_sensitive_names() {
+        for name in [
+            "JWT_SECRET",
+            "DB_PASSWORD",
+            "API_KEY",
+            "ZOOM_ACCOUNT_ID",
+            "SOME_TOKEN",
+            "MY_USERNAME",
+        ] {
+            assert!(is_sensitive_key_name(name, &[]), "{name} should match");
+        }
+    }
+
+    #[test]
+    fn rejects_non_sensitive_names() {
+        for name in ["APP_NAME", "PORT", "DB_HOST", "JWT", "SECRETARY"] {
+            assert!(!is_sensitive_key_name(name, &[]), "{name} should not match");
+        }
+    }
+
+    #[test]
+    fn lowercase_suffix_does_not_match() {
+        // The pattern is case-sensitive, matching `nv leaks` line detection.
+        assert!(!is_sensitive_key_name("my_secret", &[]));
+    }
+
+    #[test]
+    fn special_keys_are_sensitive_even_without_the_pattern() {
+        assert!(is_sensitive_key_name("CUSTOM_THING", &["CUSTOM_THING"]));
+        assert!(!is_sensitive_key_name("CUSTOM_THING", &[]));
+    }
+
+    #[test]
+    fn encoded_keys_are_not_sensitive() {
+        // This is what makes `nv encode` effective: the encoded form must not
+        // match, so `nv leaks` stops reporting it.
+        for encoded in [
+            "ENC.SldUX1NFQ1JFVA",
+            "ENC.REJfUEFTU1dPUkQ",
+            "ENC.QVBJX0tFWQ",
+        ] {
+            assert!(
+                !is_sensitive_key_name(encoded, &[]),
+                "{encoded} should not be sensitive"
+            );
+        }
     }
 }

@@ -212,6 +212,55 @@ pub fn set_value(content: &str, key: &str, value: &str) -> String {
     out
 }
 
+/// Rename `key` to `new_key` in `content`, preserving all other bytes.
+///
+/// Only the key text of each matching assignment line is rewritten; the
+/// indentation, an `export ` prefix, the value, and any inline comment are left
+/// exactly as they were. Every occurrence is renamed, so a key that appears more
+/// than once in the same file is fully rewritten. If the key is not present, the
+/// content is returned unchanged.
+pub fn rename_key(content: &str, key: &str, new_key: &str) -> String {
+    let newline = crate::parser::detect_newline(content);
+    // Remember whether the original ended in a newline so we can restore it.
+    let ends_with_newline = content.ends_with('\n') || content.is_empty();
+
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    for line in &mut lines {
+        if let Some((k, _)) = parse_line(line)
+            && k == key
+        {
+            *line = rewrite_key(line, new_key);
+        }
+    }
+
+    let mut out = lines.join(newline);
+    if ends_with_newline {
+        out.push_str(newline);
+    }
+    out
+}
+
+/// Rebuild an assignment line with a new key name, preserving indentation, an
+/// optional `export ` prefix, the existing value, and any inline comment.
+fn rewrite_key(line: &str, new_key: &str) -> String {
+    let indent_len = line.len() - line.trim_start().len();
+    let indent = &line[..indent_len];
+    let rest = &line[indent_len..];
+    let (prefix, body) = match rest.strip_prefix("export ") {
+        Some(body) => ("export ", body),
+        None => ("", rest),
+    };
+    // Everything from the `=` onwards (value plus any inline comment) is copied
+    // verbatim so the rename cannot alter it.
+    match body.find('=') {
+        Some(eq) => format!("{indent}{prefix}{new_key}{}", &body[eq..]),
+        // `parse_line` only matches lines that contain `=`, so this is
+        // unreachable in practice; fall back to leaving the line alone.
+        None => line.to_string(),
+    }
+}
+
 /// Rebuild an assignment line with a new value, preserving indentation and an
 /// optional `export ` prefix.
 fn rewrite_line(line: &str, value: &str) -> String {
@@ -303,6 +352,68 @@ mod tests {
         let content = "FOO=bar\n";
         let out = set_value(content, "NEW", "value");
         assert_eq!(out, "FOO=bar\nNEW=value\n");
+    }
+
+    #[test]
+    fn renames_key_preserving_value_and_inline_comment() {
+        let content = "# top\nJWT_SECRET=changeme # keep this\nBAR=keep\n";
+        let out = rename_key(content, "JWT_SECRET", "ENC.SldUX1NFQ1JFVA");
+        assert_eq!(
+            out,
+            "# top\nENC.SldUX1NFQ1JFVA=changeme # keep this\nBAR=keep\n"
+        );
+    }
+
+    #[test]
+    fn renames_key_preserving_export_and_indent() {
+        let content = "  export JWT_SECRET=old\n";
+        let out = rename_key(content, "JWT_SECRET", "ENC.abc");
+        assert_eq!(out, "  export ENC.abc=old\n");
+    }
+
+    #[test]
+    fn renames_key_preserving_empty_value_and_quoting() {
+        let content = "JWT_SECRET=\nDB=\"quoted value\"\n";
+        let out = rename_key(content, "JWT_SECRET", "ENC.abc");
+        assert_eq!(out, "ENC.abc=\nDB=\"quoted value\"\n");
+    }
+
+    #[test]
+    fn renames_key_preserving_crlf_and_missing_final_newline() {
+        let content = "A=1\r\nJWT_SECRET=x\r\nB=2";
+        let out = rename_key(content, "JWT_SECRET", "ENC.abc");
+        assert_eq!(out, "A=1\r\nENC.abc=x\r\nB=2");
+    }
+
+    #[test]
+    fn renames_every_occurrence_of_a_duplicated_key() {
+        let content = "JWT_SECRET=a\nOTHER=1\nJWT_SECRET=b\n";
+        let out = rename_key(content, "JWT_SECRET", "ENC.abc");
+        assert_eq!(out, "ENC.abc=a\nOTHER=1\nENC.abc=b\n");
+    }
+
+    #[test]
+    fn renaming_an_absent_key_is_a_noop() {
+        let content = "# c\nFOO=bar\n";
+        assert_eq!(rename_key(content, "NOPE", "ENC.abc"), content);
+    }
+
+    #[test]
+    fn renaming_does_not_touch_commented_out_lines() {
+        // `# JWT_SECRET=x` is a comment, not an assignment, so it is left alone.
+        let content = "# JWT_SECRET=x\nJWT_SECRET=y\n";
+        let out = rename_key(content, "JWT_SECRET", "ENC.abc");
+        assert_eq!(out, "# JWT_SECRET=x\nENC.abc=y\n");
+    }
+
+    #[test]
+    fn encoded_key_round_trips_through_the_parser() {
+        let original = "JWT_SECRET";
+        let encoded = "ENC.SldUX1NFQ1JFVA";
+        let out = rename_key(&format!("{original}=v\n"), original, encoded);
+        let pairs = parse(&out);
+        assert_eq!(pairs[0].key, encoded);
+        assert_eq!(pairs[0].value, "v");
     }
 
     #[test]

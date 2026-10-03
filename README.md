@@ -169,6 +169,8 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv find <query>` | Fuzzy-find a key across all services. |
 | `nv ls -s <SERVICE> -e <ENV>` | List all unique env keys for a service and environment (configmap, secrets, Dockerfile). Use `-e local` to include `.env` files. Filter with `--secrets` or `--configmap`. |
 | `nv missing [-e <ENV>]` | Find env keys referenced in code (PHP `env()`/`getenv()`, JS `process.env`) but missing from configmap/secrets. Without `-e`, reports missing keys per environment. |
+| `nv encode` | Base64-encode sensitive key names in `.env.example` files (`JWT_SECRET` → `ENC.SldUX1NFQ1JFVA`) so name-based scanners stop flagging them. |
+| `nv decode` | Restore key names encoded by `nv encode`. |
 | `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
 | `nv changes --service <NAME> --from <BRANCH>` | List a service's configmap/secrets changes between two git branches; optionally write a markdown report. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
@@ -224,6 +226,15 @@ nv missing -s auth -e dev
 
 # Scan every service, every environment
 nv missing --all
+
+# Hide sensitive key names in .env.example files from secret scanners
+nv encode -s auth
+
+# See what would change without writing anything
+nv encode --dry-run
+
+# Restore the original key names
+nv decode -s auth
 
 # Set the same DB URL in every service's .env and configmap
 nv set DATABASE_URL postgres://db:5432/app

@@ -9,6 +9,7 @@ mod changes;
 mod compare;
 pub mod context;
 mod duplicates;
+mod encode;
 mod encrypt;
 mod fake_secrets;
 mod find;
@@ -235,6 +236,12 @@ pub enum Command {
         environment: Option<String>,
     },
 
+    /// Base64-encode sensitive key names in .env.example files.
+    Encode,
+
+    /// Restore base64-encoded key names in .env.example files.
+    Decode,
+
     /// List all unique env keys for a service and environment.
     Ls {
         /// Environment to scope configmap/secrets to (e.g. dev, prod, qa1).
@@ -316,6 +323,8 @@ pub fn run() -> Result<()> {
         Some(Command::Decrypt { key, service, file }) => {
             encrypt::run_decrypt(&cli, key, service, file)
         }
+        Some(Command::Encode) => encode::run_encode(&cli),
+        Some(Command::Decode) => encode::run_decode(&cli),
         Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
         Some(Command::Duplicates { services }) => duplicates::run(&cli, services),
         Some(Command::Compare {

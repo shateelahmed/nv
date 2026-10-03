@@ -19,7 +19,8 @@ and `secrets*.yml` **while preserving comments and formatting**.
 3. **Example files never get real secret values** — any file containing `.example`
    in its name (e.g., `.env.example`, `.env.testing.example`) receives empty
    generated secrets.
-4. **Secrets are raw strings.** No base64 for Kubernetes `data:`.
+4. **Secrets are raw strings.** No base64 for Kubernetes `data:`. (Key *names* in
+   `.env.example` files are the one documented exception — see rule 7.)
 5. **Every command reports its config source** (`nv.yml` vs `command-line`).
 6. **Uniform output format.** All commands that display data or previews use the
    same hierarchical colorized format with tree-style vertical lines (`├──`,
@@ -28,6 +29,14 @@ and `secrets*.yml` **while preserving comments and formatting**.
    color). File names always include the full path relative to the service root
    (e.g., `docker/.env`). Diff previews use `+`/`-` indicators with
    `added`/`removed` colors.
+7. **The `ENC.` convention.** A sensitive **key name** in a `.env.example` file
+   may be stored as `ENC.<url-safe-unpadded-base64>` (e.g.
+   `ENC.SldUX1NFQ1JFVA` for `JWT_SECRET`) to hide it from name-based scanners
+   such as `nv leaks`. Such keys are written only by `nv encode` and reversed by
+   `nv decode`; never hand-author them. The alphabet must stay URL-safe and
+   unpadded, because dotenv terminates a key at the first `=` and `+`/`/` are
+   not legal key characters. Configmap, secrets, and `.env` files are never
+   renamed this way — a deployed key rename breaks the running service.
 
 ## Spec-driven development
 

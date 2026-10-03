@@ -26,7 +26,9 @@ Follow the spec-driven workflow in @specs/README.md.
   re-serialize whole files. Comments, ordering, and unrelated lines stay
   byte-identical.
 - Example files (`.env.example`, `.env.testing.example`, etc.) receive empty
-  values for generated secrets; secrets are raw strings (no base64).
+  values for generated secrets; secrets are raw strings (no base64 for
+  Kubernetes `data:` — the `ENC.` key-name convention in CLAUDE.md rule 7 is the
+  one exception, and it is confined to `.env.example` key names).
 - Edition 2024: the generate module is `src/cli/generate.rs`. `rand` 0.10 methods
   come from `rand::RngExt`.
 - Add/extend unit tests alongside the code, especially formatting-preservation
