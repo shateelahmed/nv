@@ -85,6 +85,13 @@ The key's **value is irrelevant**: a key is encoded whether its value is empty,
 a placeholder, or populated. Leaks ignores empty-valued keys, but the *name* is
 what this feature hides, so the criterion is name-only and stable over time.
 
+A key listed in `special_secret_keys` MUST be treated as sensitive by `encode`
+even though it does not match the built-in pattern — for example
+`2FA_SMS_SENDER_ID`, which real Laravel services define. Because `encode`
+discovers keys through the dotenv parser while `nv leaks` matches raw lines,
+the parser's key grammar MUST accept a leading digit so both agree on which keys
+exist; otherwise a key that `leaks` reports would be invisible to `encode`.
+
 ### Encoding format
 
 An encoded key MUST have the form:
@@ -207,9 +214,12 @@ so a second run is a no-op.
       `nv encode` runs, then the key is encoded (name-only criterion).
 - [ ] Given a `.env.example` containing a key listed in `false_alarms`, when
       `nv encode` runs, then that key is left unchanged.
-- [ ] Given a `.env.example` containing a key listed in
+- [ ] Given a key listed in
       `special_secret_keys` that does not match the built-in pattern, when
       `nv encode` runs, then that key is encoded.
+- [ ] Given a `.env.example` containing `2FA_SMS_SENDER_ID` (a key starting
+      with a digit, as Laravel services use), when `nv encode` runs, then the
+      key is encoded — the parser and `nv leaks` MUST agree that it exists.
 - [ ] Given an already-encoded `.env.example`, when `nv encode` runs again, then
       the file is byte-identical (idempotence).
 - [ ] Given a `.env.example` with comments, blank lines, `export ` prefixes, and

@@ -198,7 +198,9 @@ pub fn run_decode(cli: &Cli) -> Result<()> {
             };
 
             // A decoded name that cannot be a key would produce a broken file.
-            if !is_valid_dotenv_key(&decoded) {
+            // Reuse the parser's own rule so decode never writes a line that
+            // `parse_line` would refuse to read back.
+            if !dotenv::is_valid_key(&decoded) {
                 problems.push(problem(format!("'{decoded}' is not a valid key name")));
                 continue;
             }
@@ -249,21 +251,6 @@ pub fn run_decode(cli: &Cli) -> Result<()> {
     context::preview_and_apply(cli, &changes, &colors, use_color)
 }
 
-/// Whether `name` is a legal dotenv key: a leading letter or `_`, then
-/// letters, digits, `_`, or `.`.
-///
-/// Mirrors the parser's own rule so decode never writes a line the parser
-/// cannot read back.
-fn is_valid_dotenv_key(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    name.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,8 +286,8 @@ mod tests {
 
     #[test]
     fn encoded_key_is_a_valid_dotenv_key() {
-        assert!(is_valid_dotenv_key(&encode_key("JWT_SECRET")));
-        assert!(is_valid_dotenv_key(&encode_key("ZOOM_ACCOUNT_ID")));
+        assert!(dotenv::is_valid_key(&encode_key("JWT_SECRET")));
+        assert!(dotenv::is_valid_key(&encode_key("ZOOM_ACCOUNT_ID")));
     }
 
     #[test]
@@ -342,14 +329,14 @@ mod tests {
 
     #[test]
     fn rejects_invalid_decoded_names() {
-        assert!(is_valid_dotenv_key("JWT_SECRET"));
-        assert!(is_valid_dotenv_key("_LEADING"));
+        assert!(dotenv::is_valid_key("JWT_SECRET"));
+        assert!(dotenv::is_valid_key("_LEADING"));
         // Must start with a letter or underscore.
-        assert!(!is_valid_dotenv_key("1JWT"));
-        assert!(!is_valid_dotenv_key(""));
+        assert!(dotenv::is_valid_key("2FA_SMS_SENDER_ID"));
+        assert!(!dotenv::is_valid_key(""));
         // No `=`, spaces, or padding characters may appear in a key.
-        assert!(!is_valid_dotenv_key("JWT=SECRET"));
-        assert!(!is_valid_dotenv_key("JWT SECRET"));
+        assert!(!dotenv::is_valid_key("JWT=SECRET"));
+        assert!(!dotenv::is_valid_key("JWT SECRET"));
     }
 
     #[test]

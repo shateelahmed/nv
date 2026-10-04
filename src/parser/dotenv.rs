@@ -32,11 +32,18 @@ fn parse_line(line: &str) -> Option<(String, String)> {
     Some((key.to_string(), unquote(raw_value.trim()).into_owned()))
 }
 
-/// A valid key starts with a letter or `_`, then letters/digits/`_`/`.`.
-fn is_valid_key(key: &str) -> bool {
+/// A valid key starts with a letter, digit, or `_`, then letters/digits/`_`/`.`.
+///
+/// A leading digit is allowed on purpose: real Laravel services define keys such
+/// as `2FA_SMS_SENDER_ID`, and `nv leaks` already matches them because its
+/// key-name pattern starts with `[A-Za-z0-9_]`. Rejecting them here would make
+/// the parser disagree with `leaks`, and commands that read keys through
+/// `parse_line` (`ls`, `find`, `set`, `remove`, `encode`, `decode`) would
+/// silently skip those lines.
+pub(crate) fn is_valid_key(key: &str) -> bool {
     let mut chars = key.chars();
     match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        Some(c) if c.is_ascii_alphanumeric() || c == '_' => {}
         _ => return false,
     }
     key.chars()
@@ -345,6 +352,36 @@ mod tests {
         let content = "  export FOO=old\n";
         let out = set_value(content, "FOO", "new");
         assert_eq!(out, "  export FOO=new\n");
+    }
+
+    #[test]
+    fn parses_keys_that_start_with_a_digit() {
+        // Laravel services use keys such as `2FA_SMS_SENDER_ID`, and `nv leaks`
+        // matches them. The parser must agree or `ls`/`find`/`set`/`encode`
+        // would silently skip those lines.
+        let pairs = parse("2FA_SMS_SENDER_ID=POLAdmin\n1ABC=x\n");
+        let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, vec!["2FA_SMS_SENDER_ID", "1ABC"]);
+    }
+
+    #[test]
+    fn rejects_keys_starting_with_a_symbol() {
+        // Relaxing the leading character must not loosen the rest of the rule.
+        assert!(parse("=novalue\n").is_empty());
+        assert!(parse("+KEY=v\n").is_empty());
+        assert!(parse("-KEY=v\n").is_empty());
+        assert!(parse("KEY WITH SPACE=v\n").is_empty());
+    }
+
+    #[test]
+    fn renames_a_key_that_starts_with_a_digit() {
+        let content = "2FA_SMS_SENDER_ID=POLAdmin\nAPP_NAME=demo\n";
+        let out = rename_key(content, "2FA_SMS_SENDER_ID", "ENC.MkZQX1NNU19TRU5ERVJfSUQ");
+        assert_eq!(out, "ENC.MkZQX1NNU19TRU5ERVJfSUQ=POLAdmin\nAPP_NAME=demo\n");
+        // The renamed line must still parse, and only its key changed.
+        let pairs = parse(&out);
+        assert_eq!(pairs[0].key, "ENC.MkZQX1NNU19TRU5ERVJfSUQ");
+        assert_eq!(pairs[0].value, "POLAdmin");
     }
 
     #[test]
