@@ -44,6 +44,10 @@ and `secrets*.yml` **while preserving comments and formatting**.
    `--path`, `--clean`, `--flat`, etc. Empty `-s`/`-f` means "all"; `-a/--all`
    ignores filters. "Requires exactly one `--service`" is shared through
    `context::require_single_service`.
+9. **Never commit unless asked.** Do not run `git commit`, `git push`, or amend
+   history unless the user explicitly requests it. Leave changes staged or
+   unstaged for review. This includes committing work that appears finished or
+   that a spec/plan/tasks checklist marks complete.
 
 ## Spec-driven development
 
