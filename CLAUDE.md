@@ -37,6 +37,13 @@ and `secrets*.yml` **while preserving comments and formatting**.
    unpadded, because dotenv terminates a key at the first `=` and `+`/`/` are
    not legal key characters. Configmap, secrets, and `.env` files are never
    renamed this way — a deployed key rename breaks the running service.
+8. **One flag vocabulary.** Service and file targeting use **only** the global
+   `-s/--service`, `-f/--file`, and `-a/--all` flags (spec 020). A subcommand
+   must not re-declare these or invent parallel ones (e.g. its own `-e`/`-c`/`-x`
+   scope flags). Commands add only orthogonal options: `-e/--environment`,
+   `--path`, `--clean`, `--flat`, etc. Empty `-s`/`-f` means "all"; `-a/--all`
+   ignores filters. "Requires exactly one `--service`" is shared through
+   `context::require_single_service`.
 
 ## Spec-driven development
 

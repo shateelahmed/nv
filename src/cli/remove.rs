@@ -8,39 +8,21 @@ use crate::edit::{self, ChangeSet};
 use crate::model::FileKind;
 
 /// Handle `nv remove <KEY>...`: remove the specified keys from files scoped by
-/// file type (`-e`, `-c`, `-x`) and optionally by microservice (`-s`).
-pub fn run(
-    cli: &Cli,
-    keys: &[String],
-    env: bool,
-    configmap: bool,
-    secrets: bool,
-    all: bool,
-) -> Result<()> {
+/// the global filters (`-s/--service`, `-f/--file`, `--all`).
+///
+/// With no `-f/--file` and no `--all`, every file kind is targeted — the same
+/// "empty means all" rule the other commands follow.
+pub fn run(cli: &Cli, keys: &[String]) -> Result<()> {
     if keys.is_empty() {
         bail!("no keys specified; provide at least one key to remove");
-    }
-
-    // Validate mutual exclusivity: -a must not appear with -e/-c/-x/-s.
-    if all && (env || configmap || secrets || !cli.services.is_empty()) {
-        bail!("-a cannot be combined with -e, -c, -x, or -s");
-    }
-
-    // When -s is present without -e/-c/-x, default to all three file types.
-    // If no flags at all are provided, that's an error.
-    if !all && !env && !configmap && !secrets && cli.services.is_empty() {
-        bail!(
-            "specify at least one of -e (env), -c (configmap), -x (secrets), -a (all), or -s <NAME>"
-        );
     }
 
     let ctx = context::resolve(cli)?;
     context::print_banner(&ctx);
 
-    // Build the kind filter from the file type flags.
-    // When -s is present without -e/-c/-x, target all file types.
-    let use_all_types = all || (!env && !configmap && !secrets);
-    let kind_filter: Vec<FileKind> = if use_all_types {
+    // Empty kind filter means all kinds (global -f/--all semantics).
+    let kind_filter = ctx.kind_filter(cli)?;
+    let kind_filter: Vec<FileKind> = if kind_filter.is_empty() {
         vec![
             FileKind::Dotenv,
             FileKind::DotenvExample,
@@ -48,18 +30,7 @@ pub fn run(
             FileKind::Secret,
         ]
     } else {
-        let mut kinds = Vec::new();
-        if env {
-            kinds.push(FileKind::Dotenv);
-            kinds.push(FileKind::DotenvExample);
-        }
-        if configmap {
-            kinds.push(FileKind::ConfigMap);
-        }
-        if secrets {
-            kinds.push(FileKind::Secret);
-        }
-        kinds
+        kind_filter
     };
 
     // Build the service filter: -s if provided, empty means all.
@@ -109,20 +80,33 @@ pub fn run(
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::path::Path;
 
-    #[test]
-    fn rejects_no_flags_at_all() {
-        let cli = Cli::try_parse_from(["nv", "remove", "KEY"]).unwrap();
-        let result = run(&cli, &["KEY".into()], false, false, false, false);
-        assert!(result.is_err());
+    /// Build a `--no-config --root <empty dir>` argv so discovery finds no
+    /// services, making the run deterministic (always "no matching files").
+    fn empty_root_args(dir: &Path) -> Vec<String> {
+        vec![
+            "nv".into(),
+            "--no-config".into(),
+            "--root".into(),
+            dir.to_string_lossy().into_owned(),
+            "remove".into(),
+        ]
+    }
+
+    fn empty_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("create temp dir")
     }
 
     #[test]
-    fn service_flag_without_file_flags_defaults_to_all() {
-        // -s without -e/-c/-x should not error (defaults to all file types).
-        let cli = Cli::try_parse_from(["nv", "remove", "KEY", "-s", "auth"]).unwrap();
-        let result = run(&cli, &["KEY".into()], false, false, false, false);
-        // Will fail because no services exist in test env, but not a flag error.
+    fn remove_with_no_filters_targets_everything() {
+        // No -f/--file and no --all: every file kind is targeted.
+        let dir = empty_dir();
+        let mut argv = empty_root_args(dir.path());
+        argv.push("KEY".into());
+        let cli = Cli::try_parse_from(&argv).unwrap();
+        let result = run(&cli, &["KEY".into()]);
+        // Fails because no services exist in the empty root, not a flag error.
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -132,16 +116,41 @@ mod tests {
     }
 
     #[test]
-    fn rejects_all_with_file_flags() {
-        let cli = Cli::try_parse_from(["nv", "remove", "KEY", "-a", "-e"]).unwrap();
-        let result = run(&cli, &["KEY".into()], true, false, false, true);
+    fn file_kind_flag_selects_kinds() {
+        // Global -f replaces the old -e/-c/-x subcommand flags.
+        let dir = empty_dir();
+        let mut argv = empty_root_args(dir.path());
+        argv.push("-f".into());
+        argv.push("configmap".into());
+        argv.push("KEY".into());
+        let cli = Cli::try_parse_from(&argv).unwrap();
+        let result = run(&cli, &["KEY".into()]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no matching files"),
+            "expected 'no matching files' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn all_short_flag_is_global_alias() {
+        // -a is now the short alias for the global --all (target everything).
+        let dir = empty_dir();
+        let mut argv = empty_root_args(dir.path());
+        argv.push("-a".into());
+        argv.push("KEY".into());
+        let cli = Cli::try_parse_from(&argv).unwrap();
+        assert!(cli.all);
+        let result = run(&cli, &["KEY".into()]);
         assert!(result.is_err());
     }
 
     #[test]
-    fn rejects_all_with_service() {
-        let cli = Cli::try_parse_from(["nv", "remove", "KEY", "-a", "-s", "auth"]).unwrap();
-        let result = run(&cli, &["KEY".into()], false, false, false, true);
-        assert!(result.is_err());
+    fn rejects_unknown_legacy_scope_flags() {
+        // The old subcommand-scoped -e/-c/-x/-a are gone.
+        assert!(Cli::try_parse_from(["nv", "remove", "KEY", "-e"]).is_err());
+        assert!(Cli::try_parse_from(["nv", "remove", "KEY", "-c"]).is_err());
+        assert!(Cli::try_parse_from(["nv", "remove", "KEY", "-x"]).is_err());
     }
 }

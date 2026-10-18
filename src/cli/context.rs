@@ -54,6 +54,26 @@ impl Context {
     }
 }
 
+/// Resolve the single service a command must target, honoring global `--all`.
+///
+/// Commands that operate on one service (`ls`, `changes`, `encrypt`, …) share
+/// this so the "exactly one `--service`" rule is defined once. `--all` is
+/// honored: it is not an error to combine it with the command, and the
+/// command then falls back to its own multi-service path.
+pub fn require_single_service(cli: &Cli, services: &[Service]) -> Result<String> {
+    if cli.all {
+        bail!("this command requires exactly one --service; --all cannot be combined with it");
+    }
+    if cli.services.len() != 1 {
+        bail!("this command requires exactly one --service to select a single service");
+    }
+    let name = &cli.services[0];
+    if !services.iter().any(|s| &s.name == name) {
+        bail!("service '{name}' not found");
+    }
+    Ok(name.clone())
+}
+
 /// Resolve services and config source honoring `--no-config` and `--root`.
 ///
 /// Priority: `--no-config` forces command-line mode; otherwise we look for an
@@ -350,5 +370,57 @@ impl ScanProgress {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn service(name: &str) -> Service {
+        Service {
+            name: name.to_string(),
+            path: PathBuf::from(format!("/tmp/{name}")),
+            files: Vec::new(),
+        }
+    }
+
+    fn services() -> Vec<Service> {
+        vec![service("auth"), service("billing")]
+    }
+
+    #[test]
+    fn requires_exactly_one_service() {
+        let cli = Cli::try_parse_from(["nv", "ls", "-s", "auth", "-e", "dev"]).unwrap();
+        assert!(require_single_service(&cli, &services()).is_ok());
+
+        let cli = Cli::try_parse_from(["nv", "ls", "-e", "dev"]).unwrap();
+        assert!(require_single_service(&cli, &services()).is_err());
+
+        let cli =
+            Cli::try_parse_from(["nv", "ls", "-s", "auth", "-s", "billing", "-e", "dev"]).unwrap();
+        assert!(require_single_service(&cli, &services()).is_err());
+    }
+
+    #[test]
+    fn rejects_all_uniformly() {
+        let cli = Cli::try_parse_from(["nv", "ls", "--all", "-e", "dev"]).unwrap();
+        let err = require_single_service(&cli, &services())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("exactly one --service"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn errors_when_named_service_is_missing() {
+        let cli = Cli::try_parse_from(["nv", "ls", "-s", "nope", "-e", "dev"]).unwrap();
+        let err = require_single_service(&cli, &services())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "unexpected error: {err}");
     }
 }

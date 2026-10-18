@@ -646,13 +646,10 @@ fn render_report(service_name: &str, files: &[FileReport], colors: &ColorConfig,
 /// Resolve the service named by exactly one `--service` flag, erroring before
 /// any git work otherwise.
 fn selected_service<'a>(cli: &Cli, services: &'a [Service]) -> Result<&'a Service> {
-    if cli.all || cli.services.len() != 1 {
-        bail!("changes requires exactly one --service to select a single service.");
-    }
-    let name = &cli.services[0];
+    let name = context::require_single_service(cli, services)?;
     services
         .iter()
-        .find(|s| &s.name == name)
+        .find(|s| s.name == name)
         .ok_or_else(|| anyhow::anyhow!("service '{name}' not found"))
 }
 

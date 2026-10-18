@@ -107,26 +107,27 @@ fn decrypt_content(value: &str, password: &str) -> Result<String> {
     }
 }
 
-/// Shared runner for encrypt/decrypt — resolves the target file, reads it,
-/// calls `transform_fn`, and shows a preview.
+/// Shared runner for encrypt/decrypt — resolves the target service and file,
+/// reads it, calls `transform_fn`, and shows a preview.
 fn run_transform(
     cli: &Cli,
     password: &str,
-    service_name: &str,
     file_path: &str,
     transform_fn: fn(&str, &str) -> Result<String>,
 ) -> Result<()> {
     let ctx = super::context::resolve(cli)?;
     super::context::print_banner(&ctx);
 
-    let target_file = crate::model::find_target(&ctx.services, service_name, file_path)?;
+    let service_name = super::context::require_single_service(cli, &ctx.services)?;
+
+    let target_file = crate::model::find_target(&ctx.services, &service_name, file_path)?;
     let old_content = std::fs::read_to_string(&target_file.path).unwrap_or_default();
 
     let new_content = transform_fn(&old_content, password)?;
 
     let changes = ChangeSet {
         changes: vec![crate::edit::FileChange {
-            service: service_name.to_string(),
+            service: service_name,
             display: target_file.display.clone(),
             path: target_file.path.clone(),
             kind: target_file.kind,
@@ -143,13 +144,13 @@ fn run_transform(
 }
 
 /// Handle `nv encrypt`: encrypt an entire file.
-pub fn run_encrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
-    run_transform(cli, password, service_name, file_path, encrypt_content)
+pub fn run_encrypt(cli: &Cli, password: &str, path: &str) -> Result<()> {
+    run_transform(cli, password, path, encrypt_content)
 }
 
 /// Handle `nv decrypt`: decrypt an entire file.
-pub fn run_decrypt(cli: &Cli, password: &str, service_name: &str, file_path: &str) -> Result<()> {
-    run_transform(cli, password, service_name, file_path, decrypt_content)
+pub fn run_decrypt(cli: &Cli, password: &str, path: &str) -> Result<()> {
+    run_transform(cli, password, path, decrypt_content)
 }
 
 #[cfg(test)]

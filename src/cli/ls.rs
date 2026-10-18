@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use regex::Regex;
 
 use super::{Cli, context};
@@ -69,15 +69,12 @@ pub fn run(
     let ctx = context::resolve(cli)?;
     context::print_banner(&ctx);
 
-    if cli.services.len() != 1 {
-        bail!("ls requires exactly one --service to select a single service.");
-    }
-    let service_name = &cli.services[0];
+    let service_name = context::require_single_service(cli, &ctx.services)?;
 
     let service = ctx
         .services
         .iter()
-        .find(|s| &s.name == service_name)
+        .find(|s| s.name == service_name)
         .ok_or_else(|| anyhow::anyhow!("service '{service_name}' not found"))?;
 
     let mut keys = BTreeSet::new();

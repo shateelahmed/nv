@@ -53,7 +53,7 @@ pub struct Cli {
     pub files: Vec<String>,
 
     /// Target every service and file, ignoring --service/--file filters.
-    #[arg(long, global = true)]
+    #[arg(long, short = 'a', global = true)]
     pub all: bool,
 
     /// Show what would change without writing.
@@ -141,18 +141,6 @@ pub enum Command {
         /// The key(s) to remove (repeatable).
         #[arg(required = true)]
         keys: Vec<String>,
-        /// Target env files (.env*).
-        #[arg(short = 'e')]
-        env: bool,
-        /// Target configmap files.
-        #[arg(short = 'c')]
-        configmap: bool,
-        /// Target secrets files.
-        #[arg(short = 'x')]
-        secrets: bool,
-        /// Target all services and file types.
-        #[arg(short = 'a')]
-        all: bool,
     },
 
     /// Encrypt all values in selected .env.example files.
@@ -160,12 +148,10 @@ pub enum Command {
         /// Encryption key (required).
         #[arg(long)]
         key: String,
-        /// The service name (required).
-        #[arg(short = 'S')]
-        service: String,
-        /// The file path relative to the service directory (required).
-        #[arg(short = 'F')]
-        file: String,
+        /// The file path relative to the service directory (required). The
+        /// service itself is selected with the global -s/--service flag.
+        #[arg(long, value_name = "PATH")]
+        path: String,
     },
 
     /// Decrypt all values in selected .env.example files.
@@ -173,30 +159,21 @@ pub enum Command {
         /// Decryption key (required).
         #[arg(long)]
         key: String,
-        /// The service name (required).
-        #[arg(short = 'S')]
-        service: String,
-        /// The file path relative to the service directory (required).
-        #[arg(short = 'F')]
-        file: String,
+        /// The file path relative to the service directory (required). The
+        /// service itself is selected with the global -s/--service flag.
+        #[arg(long, value_name = "PATH")]
+        path: String,
     },
 
     /// List env keys not referenced in the codebase.
     Unused {
-        /// The service name(s) to scan (repeatable).
-        #[arg(short = 's', long = "service")]
-        services: Vec<String>,
         /// Remove unused keys (with preview).
         #[arg(long)]
         clean: bool,
     },
 
     /// List env keys that appear multiple times.
-    Duplicates {
-        /// The service name(s) to scan (repeatable).
-        #[arg(short = 's', long = "service")]
-        services: Vec<String>,
-    },
+    Duplicates,
 
     /// Compare an env file against other files of the same kind.
     Compare {
@@ -310,23 +287,13 @@ pub fn run() -> Result<()> {
         }) => generate::run(&cli, key, *length, *format, charset.clone(), *unique),
         Some(Command::Leaks { clean, false_alarm }) => leaks::run(&cli, *clean, false_alarm),
         Some(Command::FakeSecrets { false_alarm }) => fake_secrets::run(&cli, false_alarm),
-        Some(Command::Remove {
-            keys,
-            env,
-            configmap,
-            secrets,
-            all,
-        }) => remove::run(&cli, keys, *env, *configmap, *secrets, *all),
-        Some(Command::Encrypt { key, service, file }) => {
-            encrypt::run_encrypt(&cli, key, service, file)
-        }
-        Some(Command::Decrypt { key, service, file }) => {
-            encrypt::run_decrypt(&cli, key, service, file)
-        }
+        Some(Command::Remove { keys }) => remove::run(&cli, keys),
+        Some(Command::Encrypt { key, path }) => encrypt::run_encrypt(&cli, key, path),
+        Some(Command::Decrypt { key, path }) => encrypt::run_decrypt(&cli, key, path),
         Some(Command::Encode) => encode::run_encode(&cli),
         Some(Command::Decode) => encode::run_decode(&cli),
-        Some(Command::Unused { services, clean }) => unused::run(&cli, services, *clean),
-        Some(Command::Duplicates { services }) => duplicates::run(&cli, services),
+        Some(Command::Unused { clean }) => unused::run(&cli, *clean),
+        Some(Command::Duplicates) => duplicates::run(&cli),
         Some(Command::Compare {
             file_path,
             values,

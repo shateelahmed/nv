@@ -29,7 +29,7 @@ struct DuplicateKey {
 }
 
 /// Handle `nv duplicates`: list env keys that appear multiple times.
-pub fn run(cli: &Cli, _service_names: &[String]) -> Result<()> {
+pub fn run(cli: &Cli) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(&ctx);
 

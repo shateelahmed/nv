@@ -162,6 +162,10 @@ nv [GLOBAL OPTIONS] [COMMAND]
 
 ### Commands
 
+Every command shares the same **global flags** for targeting (see
+[Global options](#global-options)). Commands add only their own orthogonal
+options (an environment, a path, or a mode like `--clean`).
+
 | Command | Description |
 | --- | --- |
 | `nv` | Launch the interactive TUI. |
@@ -169,20 +173,31 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `nv find <query>` | Fuzzy-find a key across all services. |
 | `nv ls -s <SERVICE> -e <ENV>` | List all unique env keys for a service and environment (configmap, secrets, Dockerfile). Use `-e local` to include `.env` files. Filter with `--secrets` or `--configmap`. |
 | `nv missing [-e <ENV>]` | Find env keys referenced in code (PHP `env()`/`getenv()`, JS `process.env`) but missing from configmap/secrets. Without `-e`, reports missing keys per environment. |
-| `nv encode` | Base64-encode sensitive key names in `.env.example` files (`JWT_SECRET` → `ENC.SldUX1NFQ1JFVA`) so name-based scanners stop flagging them. |
-| `nv decode` | Restore key names encoded by `nv encode`. |
-| `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
-| `nv changes --service <NAME> --from <BRANCH>` | List a service's configmap/secrets changes between two git branches; optionally write a markdown report. |
 | `nv set <KEY> <VALUE>` | Set a key's value across selected services/files. |
 | `nv gen <KEY>` | Generate a secret and set it on a key. |
+| `nv remove <KEY>...` | Remove keys from the targeted services/files (global `-f`/`--all`). |
+| `nv compare <file-path>` | Compare a file against other files of the same kind; `--reorder` rewrites peers to match its key order. |
+| `nv changes --service <NAME> --from <BRANCH>` | List a service's configmap/secrets changes between two git branches; optionally write a markdown report. |
+| `nv unused [--clean]` | List env keys not referenced in the codebase. |
+| `nv duplicates` | List env keys that appear multiple times. |
+| `nv leaks [--clean] [--false-alarm <KEY>]` | List keys that look like secrets in example/configmap files. |
+| `nv fake-secrets [--false-alarm <KEY>]` | List keys with placeholder values or misfiled in secrets files. |
+| `nv encode` | Base64-encode sensitive key names in `.env.example` files (`JWT_SECRET` → `ENC.SldUX1NFQ1JFVA`) so name-based scanners stop flagging them. |
+| `nv decode` | Restore key names encoded by `nv encode`. |
+| `nv encrypt --key <KEY> --path <PATH>` | Encrypt a file's values. Select the service with `-s`. |
+| `nv decrypt --key <KEY> --path <PATH>` | Decrypt a file's values. Select the service with `-s`. |
 
 ### Global options
+
+These apply to **every** command and are the only way to target services and
+file kinds. Do not pass conflicting service/file flags to a subcommand — there
+are none.
 
 | Option | Description |
 | --- | --- |
 | `-s, --service <NAME>` | Restrict to a service (repeatable). Empty = all. |
 | `-f, --file <KIND>` | Restrict to a file kind: `dotenv`, `dotenv_example`, `configmap`, `secret` (repeatable). Empty = all. |
-| `--all` | Target every service and file, ignoring filters. |
+| `-a, --all` | Target every service and file, ignoring filters. |
 | `--root <DIR>` | Services root when there is no `nv.yml` or with `--no-config`. |
 | `--no-config` | Ignore `nv.yml` and drive everything from the command line. |
 | `--dry-run` | Show the diff without writing. |
@@ -196,6 +211,14 @@ nv [GLOBAL OPTIONS] [COMMAND]
 | `--format <FMT>` | `hex`, `base64`, or `alnum`. |
 | `--charset <CHARS>` | Custom character set (overrides `--format`). |
 | `--unique` | Generate a distinct secret per target instead of one shared value. |
+
+### `nv ls` / `nv missing` options
+
+| Option | Description |
+| --- | --- |
+| `-e, --environment <ENV>` | Environment to scope configmap/secrets to. `ls` requires it; `missing` treats it as optional. |
+| `--flat` | (`ls`) Print all keys on one line. |
+| `--secrets` / `--configmap` | (`ls`) Restrict listing to one file kind. |
 
 ### Examples
 
@@ -241,6 +264,32 @@ nv set DATABASE_URL postgres://db:5432/app
 
 # Set a value only in the auth service's .env
 nv set LOG_LEVEL debug --service auth --file dotenv
+
+# Remove a key from every configmap (global -f selects file kinds)
+nv remove OLD_FLAG --file configmap
+
+# Remove a key from one service's env files, previewing first
+nv remove STALE_KEY --service auth --file dotenv --file dotenv_example --dry-run
+
+# Find env keys not referenced in one service's code
+nv unused --service auth
+
+# Remove the unused keys (with a preview)
+nv unused --service auth --clean
+
+# List keys that appear multiple times across a service's files
+nv duplicates --service auth
+
+# List keys that look like secrets, then clean the configmap copies
+nv leaks --service auth
+nv leaks --service auth --clean
+
+# Mark a key as a false alarm so future scans skip it
+nv leaks --service auth --false-alarm APP_DEBUG
+
+# Encrypt one file's values with a key (service comes from global -s)
+nv encrypt --key "$NV_KEY" --service auth --path docker/.env.example --dry-run
+nv decrypt --key "$NV_KEY" --service auth --path docker/.env.example --dry-run
 
 # Compare a .env.example against other .env files across services
 nv compare .env.example

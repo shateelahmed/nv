@@ -408,9 +408,12 @@ fn build_clean_changes(unused_keys: &[KeyLocation], services: &[Service]) -> Res
 }
 
 /// Handle `nv unused`: list env keys not referenced in the codebase.
-pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
+pub fn run(cli: &Cli, clean: bool) -> Result<()> {
     let ctx = context::resolve(cli)?;
     context::print_banner(&ctx);
+
+    // Effective service filter from the global -s/--all flags.
+    let service_filter = ctx.service_filter(cli);
 
     let skip_dirs = build_skip_dirs(
         &ctx.config
@@ -432,7 +435,7 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
 
     let all_keys = collect_all_keys(
         &ctx.services,
-        service_names,
+        &service_filter,
         &ctx.config,
         &global_skip_files,
     );
@@ -466,12 +469,12 @@ pub fn run(cli: &Cli, service_names: &[String], clean: bool) -> Result<()> {
     let progress = context::ScanProgress::start_with_keys(unique_keys.len());
 
     // Determine which service directories to search:
-    // - If `-s` flag is provided, only search within those service directories
-    // - Otherwise, search all discovered service directories
-    let search_dirs: Vec<&Path> = if !service_names.is_empty() {
+    // - If the global -s filter is provided, only search within those service
+    //   directories; otherwise search all discovered service directories.
+    let search_dirs: Vec<&Path> = if !service_filter.is_empty() {
         ctx.services
             .iter()
-            .filter(|s| service_names.iter().any(|sn| sn == &s.name))
+            .filter(|s| service_filter.iter().any(|sn| sn == &s.name))
             .map(|s| s.path.as_path())
             .collect()
     } else {
